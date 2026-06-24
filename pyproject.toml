@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quantinvest"
+version = "0.1.0"
+description = "A quantitative investment framework integrating A-stock, US-stock data with backtrader backtesting"
+requires-python = ">=3.10"
+dependencies = [
+    "akshare>=1.12.0",
+    "baostock>=0.8.8",
+    "yfinance>=0.2.0",
+    "backtrader>=1.9.76",
+    "pandas>=2.0.0",
+    "matplotlib>=3.7.0",
+    "numpy>=1.24.0",
+    "ta-lib>=0.4.0; sys_platform != 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[project.scripts]
+quantinvest = "quantinvest.main:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
