@@ -68,7 +68,9 @@ def main() -> None:
     equity = engine.get_equity_curve()
     plot_equity_curve(
         equity,
-        title=f"Equity Curve — {symbol}",
+        df=df_copy,
+        initial_cash=100_000.0,
+        title=f"Return Curve — {symbol}",
         output=output_dir / f"equity_{symbol.replace('.', '_')}.png",
     )
 

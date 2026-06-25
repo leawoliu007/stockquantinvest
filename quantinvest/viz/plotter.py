@@ -278,14 +278,42 @@ def plot_kline(
 
 def plot_equity_curve(
     equity: pd.Series,
-    title: str = "Equity Curve",
+    df: pd.DataFrame,
+    initial_cash: float = 100_000.0,
+    title: str = "Return Curve",
     output: str | Path | None = None,
 ) -> None:
-    """Plot cumulative equity curve."""
+    """Plot strategy return rate vs buy-and-hold benchmark return.
+
+    Args:
+        equity: Equity curve from BacktestEngine (absolute values).
+        df: Original OHLCV DataFrame with 'close' column.
+        initial_cash: Starting capital for computing return rate.
+        title: Chart title.
+        output: Output file path or None to display.
+    """
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(equity.index, equity.values, linewidth=1.5, color="#2962ff")
-    ax.fill_between(equity.index, equity.values, alpha=0.3)
+
+    # Strategy return rate: (equity - initial) / initial * 100%
+    strategy_return = (equity.values - initial_cash) / initial_cash * 100
+    ax.plot(
+        equity.index, strategy_return, linewidth=1.5, color="#2962ff", label="Strategy return"
+    )
+
+    # Buy-and-hold benchmark: (close - first_close) / first_close * 100%
+    close_values = df["close"].values
+    first_close = close_values[0]
+    benchmark_return = (close_values - first_close) / first_close * 100
+    ax.plot(
+        df.index, benchmark_return, linewidth=1.5, color="#ff9800", label="Buy & hold"
+    )
+
+    # Zero line
+    ax.axhline(0, color="gray", linewidth=0.8, linestyle="-")
+
     ax.set_title(title)
+    ax.set_ylabel("Return (%)")
+    ax.legend()
     ax.grid(True)
     _format_date(ax)
     fig.tight_layout()
