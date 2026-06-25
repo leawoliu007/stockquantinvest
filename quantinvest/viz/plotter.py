@@ -280,6 +280,7 @@ def plot_equity_curve(
     equity: pd.Series,
     df: pd.DataFrame,
     initial_cash: float = 100_000.0,
+    completed_trades: pd.DataFrame | None = None,
     title: str = "Return Curve",
     output: str | Path | None = None,
 ) -> None:
@@ -289,6 +290,7 @@ def plot_equity_curve(
         equity: Equity curve from BacktestEngine (absolute values).
         df: Original OHLCV DataFrame with 'close' column.
         initial_cash: Starting capital for computing return rate.
+        completed_trades: Completed trades DataFrame with buy_date, sell_date, is_profitable.
         title: Chart title.
         output: Output file path or None to display.
     """
@@ -311,9 +313,42 @@ def plot_equity_curve(
     # Zero line
     ax.axhline(0, color="gray", linewidth=0.8, linestyle="-")
 
+    # Plot trade regions if completed_trades provided
+    if completed_trades is not None and not completed_trades.empty:
+        from matplotlib.patches import Patch
+
+        y_min = min(strategy_return.min(), benchmark_return.min()) - 2
+        y_max = max(strategy_return.max(), benchmark_return.max()) + 2
+
+        for _, row in completed_trades.iterrows():
+            buy_date = pd.Timestamp(row["buy_date"])
+            sell_date = pd.Timestamp(row["sell_date"])
+            is_profitable = row["is_profitable"]
+
+            x_start = mdates.date2num(buy_date)
+            x_end = mdates.date2num(sell_date)
+            color = "#ef5350" if is_profitable else "#26a69a"
+            ax.fill_between(
+                [x_start, x_end],
+                [y_min, y_min],
+                [y_max, y_max],
+                color=color,
+                alpha=0.15,
+                zorder=2,
+            )
+
+        legend_elements = [
+            Patch(color="#ef5350", alpha=0.15, label="Profit trade"),
+            Patch(color="#26a69a", alpha=0.15, label="Loss trade"),
+        ]
+        existing_handles, existing_labels = ax.get_legend_handles_labels()
+        ax.legend(
+            handles=existing_handles + legend_elements,
+            labels=existing_labels + [e.get_label() for e in legend_elements],
+        )
+
     ax.set_title(title)
     ax.set_ylabel("Return (%)")
-    ax.legend()
     ax.grid(True)
     _format_date(ax)
     fig.tight_layout()

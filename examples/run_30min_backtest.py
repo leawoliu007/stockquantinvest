@@ -78,6 +78,7 @@ def main() -> None:
         equity,
         df=df_copy,
         initial_cash=100_000.0,
+        completed_trades=engine.get_completed_trades(),
         title=f"Return Curve — {symbol} (30min)",
         output=output_dir / f"equity_{symbol.replace('.', '_')}_30min.png",
     )

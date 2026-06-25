@@ -70,6 +70,7 @@ def main() -> None:
         equity,
         df=df_copy,
         initial_cash=100_000.0,
+        completed_trades=completed_trades,
         title=f"Return Curve — {symbol}",
         output=output_dir / f"equity_{symbol.replace('.', '_')}.png",
     )
