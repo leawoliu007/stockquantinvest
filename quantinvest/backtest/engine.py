@@ -23,6 +23,8 @@ class BacktestEngine:
         self.cash = cash
         self.stake = stake
         self._equity_tracker: list[tuple] = []
+        self._trade_signals: list[tuple] = []
+        self._completed_trades: list[tuple] = []
 
         self.cerebro = bt.Cerebro()
         self.cerebro.broker.setcash(cash)
@@ -44,7 +46,13 @@ class BacktestEngine:
 
     def run(self, strategy: Type, **kwargs: Any) -> bt.analyzers.Snapshot:
         """Run the strategy and return analyzers."""
-        self.cerebro.addstrategy(strategy, _equity_tracker=self._equity_tracker, **kwargs)
+        self.cerebro.addstrategy(
+            strategy,
+            _equity_tracker=self._equity_tracker,
+            _trade_signals=self._trade_signals,
+            _completed_trades=self._completed_trades,
+            **kwargs,
+        )
         results = self.cerebro.run()
         return results[0]
 
@@ -54,6 +62,23 @@ class BacktestEngine:
             return pd.Series(dtype=float)
         dates, values = zip(*self._equity_tracker)
         return pd.Series(values, index=pd.Index(dates))
+
+    def get_trade_signals(self) -> pd.DataFrame:
+        """Return trade signals as a DataFrame with columns: date, signal, price."""
+        if not self._trade_signals:
+            return pd.DataFrame(columns=["date", "signal", "price"])
+        return pd.DataFrame(self._trade_signals, columns=["date", "signal", "price"])
+
+    def get_completed_trades(self) -> pd.DataFrame:
+        """Return completed trades as a DataFrame.
+
+        Columns: buy_date, sell_date, buy_price, sell_price, pnl, is_profitable
+        """
+        if not self._completed_trades:
+            return pd.DataFrame(columns=["buy_date", "sell_date", "buy_price", "sell_price", "pnl", "is_profitable"])
+        return pd.DataFrame(
+            self._completed_trades, columns=["buy_date", "sell_date", "buy_price", "sell_price", "pnl", "is_profitable"]
+        )
 
     def get_report(self) -> str:
         """Return a text summary of portfolio performance."""

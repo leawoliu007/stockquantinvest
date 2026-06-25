@@ -41,11 +41,14 @@ def main() -> None:
 
     print(engine.get_report())
 
+    # Get completed trades for visualization
+    completed_trades = engine.get_completed_trades()
+
     # Generate charts
     output_dir = Path(__file__).parent.parent / "charts"
     output_dir.mkdir(exist_ok=True)
 
-    # 1. K-line with indicators (MA + MACD)
+    # 1. K-line with indicators (MA + MACD) and trade regions
     df_copy = df.copy()
     indicators = {
         "MA5": df_copy["close"].rolling(5).mean(),
@@ -57,6 +60,7 @@ def main() -> None:
         df_copy,
         title=f"{symbol} — MACD Strategy",
         indicators=indicators,
+        completed_trades=completed_trades,
         output=output_dir / f"kline_{symbol.replace('.', '_')}.png",
     )
 
