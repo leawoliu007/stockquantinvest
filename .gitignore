@@ -10,3 +10,7 @@ build/
 
 # SQLite database
 data.db
+
+# Frontend
+web/frontend/node_modules/
+web/frontend/dist/

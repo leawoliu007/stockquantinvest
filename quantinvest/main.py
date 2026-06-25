@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+from pathlib import Path
 
 
 def main() -> None:
@@ -33,6 +35,12 @@ def main() -> None:
     wp.add_argument("--symbol", help="Stock symbol to add or remove")
     wp.add_argument("--name", default="", help="Display name (for add)")
 
+    # web subcommand
+    wbp = subparsers.add_parser("web", help="Start the web dashboard")
+    wbp.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    wbp.add_argument("--port", type=int, default=8000, help="Backend port (default: 8000)")
+    wbp.add_argument("--dev", action="store_true", help="Run frontend in dev mode with Vite")
+
     args = parser.parse_args()
     if args.command == "backtest":
         _run_backtest(args)
@@ -40,6 +48,8 @@ def main() -> None:
         _fetch_data(args)
     elif args.command == "watchlist":
         _manage_watchlist(args)
+    elif args.command == "web":
+        _run_web(args)
     else:
         parser.print_help()
 
@@ -122,6 +132,59 @@ def _manage_watchlist(args) -> None:
         print(f"Removed {args.symbol}")
 
     db.close()
+
+
+def _run_web(args) -> None:
+    """Start the web dashboard: FastAPI backend + static frontend."""
+    project_root = Path(__file__).resolve().parent.parent
+    frontend_dist = project_root / "web" / "frontend" / "dist"
+
+    if args.dev:
+        # Dev mode: launch Vite dev server + uvicorn in parallel
+        print("[quantinvest] Starting dev mode...")
+        print(f"[quantinvest] Frontend: http://localhost:3000 (Vite)")
+        print(f"[quantinvest] Backend:  http://{args.host}:{args.port} (uvicorn)")
+        print("[quantinvest] Press Ctrl+C to stop\n")
+
+        vite_proc = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--host", "127.0.0.1"],
+            cwd=str(project_root / "web" / "frontend"),
+        )
+        import uvicorn
+        uvicorn.run(
+            "web.backend.app:app",
+            host=args.host,
+            port=args.port,
+            factory=False,
+        )
+    else:
+        # Production mode: serve built static files
+        if not frontend_dist.exists():
+            print("[quantinvest] Frontend not built. Building now...")
+            result = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(project_root / "web" / "frontend"),
+            )
+            if result.returncode != 0:
+                print("[quantinvest] Build failed. Run 'npm run build' manually.")
+                sys.exit(1)
+
+        # Mount static files and start uvicorn
+        from fastapi.staticfiles import StaticFiles
+
+        from web.backend.app import app
+
+        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+
+        print(f"[quantinvest] Dashboard running at http://{args.host}:{args.port}")
+        print("[quantinvest] Press Ctrl+C to stop\n")
+
+        import uvicorn
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+        )
 
 
 if __name__ == "__main__":
