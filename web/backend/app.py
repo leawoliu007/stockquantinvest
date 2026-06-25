@@ -65,6 +65,93 @@ def _get_db() -> QuantDB:
     return db
 
 
+# --- Resolve Symbol API ---
+
+@app.get("/api/resolve-symbol")
+def resolve_symbol(code: str = Query(..., description="Raw stock code (e.g. 600519 or 510300)")):
+    """Try common market suffixes and return the first one that has data."""
+    # Determine candidate suffixes based on input pattern
+    suffixes = _guess_suffixes(code)
+
+    from quantinvest.data import BaoStockData, AkShareData, YFinanceData
+
+    results = []
+    for suffix in suffixes:
+        full_symbol = f"{code}{suffix}"
+        # HK stocks use akshare stock_hk_hist directly
+        if suffix == ".HK":
+            try:
+                import akshare as ak
+                hk_code = code.zfill(5)  # pad to 5 digits for akshare
+                df = ak.stock_hk_hist(symbol=hk_code, period="daily",
+                    start_date=(date.today() - timedelta(days=7)).strftime("%Y%m%d"),
+                    end_date=date.today().strftime("%Y%m%d"))
+                if not df.empty and len(df) >= 2:
+                    results.append({"symbol": full_symbol, "source": "akshare_hk"})
+            except Exception:
+                pass
+        # US stocks use yfinance
+        elif suffix == ".US":
+            try:
+                provider = YFinanceData()
+                df = provider.fetch(full_symbol, start=(date.today() - timedelta(days=7)).strftime("%Y-%m-%d"), end=date.today().strftime("%Y-%m-%d"))
+                if not df.empty and len(df) >= 2:
+                    results.append({"symbol": full_symbol, "source": "yfinance"})
+            except Exception:
+                pass
+        # A-share / ETF — try baostock first, then akshare
+        else:
+            for src_cls in [BaoStockData, AkShareData]:
+                try:
+                    provider = src_cls()
+                    df = provider.fetch(full_symbol, start=(date.today() - timedelta(days=7)).strftime("%Y-%m-%d"), end=date.today().strftime("%Y-%m-%d"))
+                    if not df.empty and len(df) >= 2:
+                        results.append({"symbol": full_symbol, "source": src_cls.__name__})
+                        break
+                except Exception:
+                    continue
+
+    if len(results) == 0:
+        raise HTTPException(404, f"No data found for code '{code}' in any market")
+    if len(results) == 1:
+        return {"symbol": results[0]["symbol"], "ambiguous": False}
+    # Multiple matches — return all for frontend to pick
+    return {"symbol": results[0]["symbol"], "ambiguous": True, "alternatives": [r["symbol"] for r in results]}
+
+
+def _guess_suffixes(code: str) -> list[str]:
+    """Order suffix candidates by likelihood based on code pattern."""
+    # Already has suffix — return as-is
+    if "." in code:
+        return [code.split(".")[1].upper()]
+
+    # US stocks contain letters
+    if any(c.isalpha() for c in code):
+        return [".US"]
+
+    # A-share patterns
+    num = code.lstrip("0") or "0"
+    first_digit = code[0] if code else ""
+
+    if first_digit in ("6",):  # Shanghai main + STAR (688)
+        return [".SH", ".SZ", ".HK", ".BJ"]
+    if first_digit in ("0",):  # Shenzhen main
+        return [".SZ", ".SH", ".HK", ".BJ"]
+    if first_digit == "3":  # GEM / ChiNext
+        return [".SZ", ".SH", ".HK", ".BJ"]
+    if first_digit in ("8", "4"):  # BSE / NEEQ
+        return [".BJ", ".SH", ".SZ", ".HK"]
+
+    # ETF / ambiguous (5, 1, 2, 7, 9 prefix or HK-style 4-5 digits)
+    if len(code) == 6:
+        return [".SH", ".SZ", ".BJ", ".HK"]
+    # HK-style (typically 4-5 digits starting with 0)
+    if len(code) <= 5:
+        return [".HK", ".US", ".SH", ".SZ"]
+
+    return [".SH", ".SZ", ".HK", ".US", ".BJ"]
+
+
 # --- Watchlist API ---
 
 @app.get("/api/watchlist")

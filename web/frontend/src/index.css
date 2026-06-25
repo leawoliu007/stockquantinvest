@@ -128,8 +128,15 @@ body {
   padding: 0 16px 12px;
 }
 
-.add-form input {
+.add-input-wrapper {
   flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-form input {
   background: var(--bg-glass);
   border: 1px solid var(--border-glass);
   color: var(--text-primary);
@@ -137,10 +144,40 @@ body {
   border-radius: 4px;
   font-size: 12px;
   outline: none;
+  width: 100%;
 }
 
 .add-form input:focus {
   border-color: var(--accent);
+}
+
+.resolved-preview {
+  font-size: 11px;
+  color: var(--green);
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.resolved-preview:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.resolve-error {
+  font-size: 11px;
+  color: var(--red);
+  padding: 2px 4px;
+}
+
+.resolve-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--border-glass);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
 }
 
 .add-form button {
@@ -154,8 +191,84 @@ body {
   transition: background 0.15s;
 }
 
-.add-form button:hover {
+.add-form button:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.add-form button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* --- Modal --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+}
+
+.modal-content h3 {
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.modal-content p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.market-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.market-option {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.market-option:hover,
+.market-option.selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.modal-cancel {
+  width: 100%;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* --- Strategy selector --- */

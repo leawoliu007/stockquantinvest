@@ -19,6 +19,11 @@ export default function App() {
   const [stats, setStats] = useState(null)
   const [newSymbol, setNewSymbol] = useState('')
   const [strategies, setStrategies] = useState([])
+  const [resolvedSymbol, setResolvedSymbol] = useState(null)
+  const [resolving, setResolving] = useState(false)
+  const [resolveError, setResolveError] = useState(null)
+  const [ambiguousModal, setAmbiguousModal] = useState(null) // { code, alternatives }
+  const resolveTimer = useRef(null)
   const abortRef = useRef(null)
   const reqSeq = useRef(0) // sequence counter to discard stale responses
 
@@ -106,12 +111,45 @@ export default function App() {
     runBacktest()
   }, [runBacktest])
 
+  // Resolve symbol — debounce 500ms
+  const resolveCode = useCallback((code) => {
+    code = code.trim()
+    if (!code || code.includes(".")) {
+      setResolvedSymbol(code || null)
+      setResolveError(null)
+      return
+    }
+    if (resolveTimer.current) clearTimeout(resolveTimer.current)
+    setResolving(true)
+    setResolveError(null)
+    resolveTimer.current = setTimeout(async () => {
+      try {
+        const res = await axios.get(`${API}/resolve-symbol`, { params: { code } })
+        if (res.data.ambiguous && res.data.alternatives && res.data.alternatives.length > 1) {
+          setAmbiguousModal({ code, alternatives: res.data.alternatives, selected: res.data.symbol })
+          setResolvedSymbol(null)
+        } else {
+          setResolvedSymbol(res.data.symbol)
+        }
+      } catch (e) {
+        setResolveError(e.response?.data?.detail || "未找到")
+        setResolvedSymbol(null)
+      } finally {
+        setResolving(false)
+      }
+    }, 500)
+  }, [])
+
   // Add symbol
-  const addSymbol = async () => {
-    if (!newSymbol.trim()) return
+  const addSymbol = async (symbol) => {
+    const finalSymbol = symbol || resolvedSymbol || newSymbol.trim()
+    if (!finalSymbol) return
     try {
-      await axios.post(`${API}/watchlist`, { symbol: newSymbol.trim(), name: '', market: '' })
+      await axios.post(`${API}/watchlist`, { symbol: finalSymbol, name: '', market: '' })
       setNewSymbol('')
+      setResolvedSymbol(null)
+      setResolveError(null)
+      setAmbiguousModal(null)
       await loadWatchlist()
     } catch {}
   }
@@ -161,13 +199,42 @@ export default function App() {
         </div>
 
         <form className="add-form" onSubmit={e => { e.preventDefault(); addSymbol() }}>
-          <input
-            value={newSymbol}
-            onChange={e => setNewSymbol(e.target.value)}
-            placeholder="输入代码 如 600519.SH"
-          />
-          <button type="submit">+</button>
+          <div className="add-input-wrapper">
+            <input
+              value={newSymbol}
+              onChange={e => { setNewSymbol(e.target.value); resolveCode(e.target.value) }}
+              placeholder="输入代码 如 600519"
+            />
+            {resolving && <span className="resolve-spinner" />}
+            {resolvedSymbol && !resolving && (
+              <span className="resolved-preview" onClick={() => addSymbol()} title="点击添加">{resolvedSymbol}</span>
+            )}
+            {resolveError && <span className="resolve-error">{resolveError}</span>}
+          </div>
+          <button type="submit" disabled={!newSymbol.trim()}>+</button>
         </form>
+
+        {/* Ambiguous market selection modal */}
+        {ambiguousModal && (
+          <div className="modal-overlay" onClick={() => setAmbiguousModal(null)}>
+            <div className="modal-content" onClick={e => e.stopPropagation()}>
+              <h3>选择市场</h3>
+              <p>代码 <strong>{ambiguousModal.code}</strong> 可能属于以下市场：</p>
+              <div className="market-options">
+                {ambiguousModal.alternatives.map(sym => (
+                  <button
+                    key={sym}
+                    className={`market-option ${sym === ambiguousModal.selected ? 'selected' : ''}`}
+                    onClick={() => { addSymbol(sym); setAmbiguousModal(null) }}
+                  >
+                    {sym}
+                  </button>
+                ))}
+              </div>
+              <button className="modal-cancel" onClick={() => setAmbiguousModal(null)}>取消</button>
+            </div>
+          </div>
+        )}
 
         <div className="strategy-selector">
           <div className="sidebar-section" style={{ padding: 0 }}>
