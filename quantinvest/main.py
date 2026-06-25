@@ -27,11 +27,19 @@ def main() -> None:
     dp.add_argument("--symbol", required=True)
     dp.add_argument("--source", choices=["akshare", "baostock", "yfinance"])
 
+    # watchlist subcommand
+    wp = subparsers.add_parser("watchlist", help="Manage watchlist")
+    wp.add_argument("action", choices=["list", "add", "remove"], help="Action to perform")
+    wp.add_argument("--symbol", help="Stock symbol to add or remove")
+    wp.add_argument("--name", default="", help="Display name (for add)")
+
     args = parser.parse_args()
     if args.command == "backtest":
         _run_backtest(args)
     elif args.command == "data":
         _fetch_data(args)
+    elif args.command == "watchlist":
+        _manage_watchlist(args)
     else:
         parser.print_help()
 
@@ -73,6 +81,47 @@ def _fetch_data(args) -> None:
 
     df = data.fetch(args.symbol)
     print(df.tail(10))
+
+
+def _manage_watchlist(args) -> None:
+    from quantinvest.data import QuantDB
+    from quantinvest.config import load_config
+
+    cfg = load_config()
+    db = QuantDB(cfg.db_path)
+
+    # Load from JSON file first time
+    db.save_watchlist_from_file(cfg.watchlist_file)
+
+    if args.action == "list":
+        items = db.get_watchlist()
+        if not items:
+            print("Watchlist is empty.")
+            db.close()
+            return
+        print(f"\n{'Symbol':<15} {'Name':<15} {'Market':<8} {'Added At'}")
+        print("-" * 60)
+        for item in items:
+            print(f"{item['symbol']:<15} {item.get('name', ''):<15} {item.get('market', ''):<8} {item.get('added_at', '')}")
+        print()
+
+    elif args.action == "add":
+        if not args.symbol:
+            print("Error: --symbol is required for add action.")
+            db.close()
+            return
+        db.add_watchlist(args.symbol, args.name)
+        print(f"Added {args.symbol}" + (f" ({args.name})" if args.name else ""))
+
+    elif args.action == "remove":
+        if not args.symbol:
+            print("Error: --symbol is required for remove action.")
+            db.close()
+            return
+        db.remove_watchlist(args.symbol)
+        print(f"Removed {args.symbol}")
+
+    db.close()
 
 
 if __name__ == "__main__":
