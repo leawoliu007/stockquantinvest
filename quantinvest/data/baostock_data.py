@@ -6,6 +6,18 @@ import baostock as bs
 import pandas as pd
 
 
+# BaoStock frequency mapping
+_BAO_FREQ_MAP = {
+    "daily": "d",
+    "weekly": "w",
+    "monthly": "m",
+    "5min": "5",
+    "15min": "15",
+    "30min": "30",
+    "60min": "60",
+}
+
+
 class BaoStockData:
     """Fetch A-stock historical data from BaoStock."""
 
@@ -15,17 +27,19 @@ class BaoStockData:
         start: str | dt.date = "2020-01-01",
         end: str | dt.date = dt.date.today().strftime("%Y-%m-%d"),
         freq: str = "daily",
+        use_cache: bool = True,
     ) -> pd.DataFrame:
         if not bs.login().error_code == "0":
             raise RuntimeError("baostock login failed")
         try:
             code = self._to_bao_symbol(symbol)
+            bao_freq = _BAO_FREQ_MAP.get(freq, "d")
             rs = bs.query_history_k_data_plus(
                 code,
                 "date,open,high,low,close,volume",
                 start_date=str(start),
                 end_date=str(end),
-                frequency={"daily": "d", "weekly": "w", "monthly": "m"}[freq],
+                frequency=bao_freq,
                 adjustflag="2",  # 前复权
             )
             rows = []

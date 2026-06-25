@@ -25,6 +25,7 @@ class YFinanceData:
         start: str | dt.date = "2020-01-01",
         end: str | dt.date = dt.date.today().strftime("%Y-%m-%d"),
         freq: str = "daily",
+        use_cache: bool = True,
     ) -> pd.DataFrame:
         ticker = self._to_yf_symbol(symbol)
         df = yf.Ticker(ticker).history(

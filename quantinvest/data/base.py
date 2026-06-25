@@ -16,11 +16,16 @@ class StockData(abc.ABC):
         start: str | date = "2020-01-01",
         end: str | date = date.today().strftime("%Y-%m-%d"),
         freq: str = "daily",
+        use_cache: bool = True,
     ) -> pd.DataFrame:
         """Fetch historical OHLCV data.
 
         Returns a DataFrame with columns:
             date, open, high, low, close, volume, [optional indicators]
+
+        Args:
+            freq: Frequency — "daily", "weekly", "monthly", "30min", "15min", "5min"
+            use_cache: If True, use SQLite cache for incremental updates.
         """
 
     @abc.abstractmethod
