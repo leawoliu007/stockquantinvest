@@ -39,6 +39,7 @@ class QuantData:
     _SOURCE_MAP = {
         ".SH": "akshare",
         ".SZ": "akshare",
+        ".ETF": "akshare",
         ".HK": "yfinance",
         ".US": "yfinance",
     }
