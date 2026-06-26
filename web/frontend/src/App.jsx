@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import axios from 'axios'
 
@@ -30,6 +30,8 @@ export default function App() {
   const resolveTimer = useRef(null)
   const abortRef = useRef(null)
   const reqSeq = useRef(0) // sequence counter to discard stale responses
+  const debounceTimer = useRef(null) // debounce timer for cache loading
+  const lastLoadKey = useRef(null)   // track last loaded "symbol:freq:strategy" to skip redundant loads
 
   // Load watchlist
   const loadWatchlist = useCallback(async () => {
@@ -73,10 +75,7 @@ export default function App() {
       setWatchlist(prev => prev.map(w =>
         w.symbol === symbol ? { ...w, strategy: newStrategy } : w
       ))
-      // Re-run backtest if this symbol is selected
-      if (symbol === selectedSymbol) {
-        runBacktest()
-      }
+      // useEffect with currentStrategy dependency will trigger cache-load automatically
     } catch {}
   }
 
@@ -139,21 +138,34 @@ export default function App() {
     }
   }, [selectedSymbol, freq])
 
-  // Auto-run when symbol/freq/strategy changes
-  const currentStrategy = getSelectedStrategy()
-
   // Load cached backtest result from DB; if none, run fresh backtest
   const loadCachedBacktest = useCallback(async () => {
     if (!selectedSymbol) return
+    // Abort if already loading or running (avoids duplicate calls from rapid switching)
+    if (loading || running) return
+    const strategy = getSelectedStrategy()
     setLoading(true)
     try {
-      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`)
+      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`, {
+        params: { freq, strategy },
+      })
       if (res.data) {
         // Has cached result — populate UI directly
         const cached = res.data
         setKlineData(cached.kline || [])
         setReturnsCurve(cached.returns_curve || [])
-        setBhBenchmark([])
+        // Regenerate buy-and-hold benchmark from kline data
+        const kline = cached.kline || []
+        if (kline.length >= 1) {
+          const firstPrice = kline[0].close
+          const bh = kline.map(r => ({
+            date: r.date,
+            value: +((r.close - firstPrice) / firstPrice * 100).toFixed(2),
+          }))
+          setBhBenchmark(bh)
+        } else {
+          setBhBenchmark([])
+        }
         setSignals([])
         setPositionMap({})
         setCompletedTrades(cached.trades || [])
@@ -164,7 +176,7 @@ export default function App() {
         setStats({
           finalValue: cached.final_value,
           totalReturn: cached.total_return_pct,
-          bars: (cached.kline || []).length,
+          bars: kline.length,
           trades: cached.trade_count,
           winCount: cached.win_count,
           lossCount: cached.loss_count,
@@ -180,11 +192,18 @@ export default function App() {
     setLoading(false)
     // No cache — run fresh backtest
     runBacktest()
-  }, [selectedSymbol, runBacktest])
+  }, [selectedSymbol, freq, runBacktest])
 
+  // Auto-load when symbol, freq, or strategy changes (debounced 200ms)
   useEffect(() => {
-    loadCachedBacktest()
-  }, [loadCachedBacktest])
+    if (!selectedSymbol) return
+    const strategy = watchlist.find(w => w.symbol === selectedSymbol)?.strategy || 'macross'
+    const key = `${selectedSymbol}:${freq}:${strategy}`
+    // Skip if already loaded this combo (avoids re-triggering on quote refresh)
+    if (lastLoadKey.current === key) return
+    lastLoadKey.current = key
+    debounceTimer.current = setTimeout(loadCachedBacktest, 200)
+  }, [selectedSymbol, freq, watchlist])
 
   // Resolve symbol — debounce 500ms
   const resolveCode = useCallback((code) => {
@@ -273,11 +292,11 @@ export default function App() {
   }
 
   // --- K-line chart ---
-  const klineOption = createKlineOption(klineData, completedTrades)
+  const klineOption = useMemo(() => createKlineOption(klineData, completedTrades), [klineData, completedTrades])
 
   // --- Returns chart ---
-  const cleanDates = klineData.filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0).map(d => d.date)
-  const returnsOption = createReturnsOption(returnsCurve, bhBenchmark, completedTrades, cleanDates)
+  const cleanDates = useMemo(() => klineData.filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0).map(d => d.date), [klineData])
+  const returnsOption = useMemo(() => createReturnsOption(returnsCurve, bhBenchmark, completedTrades, cleanDates), [returnsCurve, bhBenchmark, completedTrades, cleanDates])
 
   return (
     <div className="app">
@@ -663,8 +682,9 @@ function createReturnsOption(returns, benchmark, completedTrades, klineDates) {
         if (!params || params.length === 0) return ''
         let tip = `<div style="margin-bottom:4px">${params[0].axisValue}</div>`
         for (const p of params) {
-          const sign = p.value >= 0 ? '+' : ''
-          tip += `<span style="display:inline-block;margin-right:8px;color:${p.color}">${p.seriesName}: ${sign}${p.value.toFixed(2)}%</span>`
+          const v = p.value ?? 0
+          const sign = v >= 0 ? '+' : ''
+          tip += `<span style="display:inline-block;margin-right:8px;color:${p.color}">${p.seriesName}: ${sign}${v.toFixed(2)}%</span>`
         }
         return tip
       },

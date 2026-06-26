@@ -61,17 +61,15 @@ class AnalyzeRequest(BaseModel):
 
 
 # --- Helper: get DB connection ---
-
-_db_instance: QuantDB | None = None
+# Each call creates a fresh connection to avoid SQLite cross-thread errors
+# (uvicorn runs handlers in a thread pool; a shared conn breaks under concurrency)
 
 def _get_db() -> QuantDB:
-    global _db_instance
-    if _db_instance is None:
-        cfg = load_config()
-        _db_instance = QuantDB(cfg.db_path)
-        # Import watchlist JSON only once at startup
-        _db_instance.save_watchlist_from_file(cfg.watchlist_file)
-    return _db_instance
+    cfg = load_config()
+    db = QuantDB(cfg.db_path)
+    # Import watchlist JSON is idempotent (INSERT OR IGNORE), safe to call each time
+    db.save_watchlist_from_file(cfg.watchlist_file)
+    return db
 
 
 # --- Resolve Symbol API ---
@@ -663,14 +661,26 @@ def run_analyze(
 # --- Backtest Cache API ---
 
 @app.get("/api/backtest-cached/{symbol}")
-def get_cached_backtest(symbol: str):
-    """Get the most recent saved backtest result for a symbol, or null."""
+def get_cached_backtest(
+    symbol: str,
+    freq: Optional[str] = Query(None),
+    strategy: Optional[str] = Query(None),
+):
+    """Get the most recent saved backtest result for a symbol, or null.
+    
+    Optionally filter by freq and strategy to avoid returning stale cache.
+    """
     db = _get_db()
     try:
         results = db.get_backtest_history(symbol=symbol, limit=1)
         if not results:
             return None
         row = results[0]
+        # Validate freq/strategy match if provided
+        if freq and row.get("freq") != freq:
+            return None
+        if strategy and row.get("strategy") != strategy:
+            return None
         detail = db.get_backtest_result(row["id"])
     finally:
         db.close()
