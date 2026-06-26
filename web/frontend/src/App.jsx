@@ -8,7 +8,8 @@ export default function App() {
   const [watchlist, setWatchlist] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [freq, setFreq] = useState('daily')
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(false)     // loading cached data from DB
+  const [running, setRunning] = useState(false)      // running backtest (fetching + computing)
   const [klineData, setKlineData] = useState([])
   const [returnsCurve, setReturnsCurve] = useState([])
   const [bhBenchmark, setBhBenchmark] = useState([])
@@ -86,7 +87,7 @@ export default function App() {
     // Increment sequence to invalidate previous in-flight request
     const seq = ++reqSeq.current
 
-    setLoading(true)
+    setRunning(true)
     try {
       const res = await axios.get(`${API}/analyze`, {
         params: { symbol: selectedSymbol, freq },
@@ -134,15 +135,56 @@ export default function App() {
       setCompletedTrades([])
       setStats(null)
     } finally {
-      setLoading(false)
+      setRunning(false)
     }
   }, [selectedSymbol, freq])
 
   // Auto-run when symbol/freq/strategy changes
   const currentStrategy = getSelectedStrategy()
-  useEffect(() => {
+
+  // Load cached backtest result from DB; if none, run fresh backtest
+  const loadCachedBacktest = useCallback(async () => {
+    if (!selectedSymbol) return
+    setLoading(true)
+    try {
+      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`)
+      if (res.data) {
+        // Has cached result — populate UI directly
+        const cached = res.data
+        setKlineData(cached.kline || [])
+        setReturnsCurve(cached.returns_curve || [])
+        setBhBenchmark([])
+        setSignals([])
+        setPositionMap({})
+        setCompletedTrades(cached.trades || [])
+        const trades = cached.trades || []
+        const wins = trades.filter(t => t.is_profitable)
+        const losses = trades.filter(t => !t.is_profitable)
+        const winRate = trades.length > 0 ? (wins.length / trades.length * 100) : 0
+        setStats({
+          finalValue: cached.final_value,
+          totalReturn: cached.total_return_pct,
+          bars: (cached.kline || []).length,
+          trades: cached.trade_count,
+          winCount: cached.win_count,
+          lossCount: cached.loss_count,
+          winRate,
+          plRatio: cached.pl_ratio || 0,
+          avgPositiveReturn: cached.avg_positive_return || 0,
+          avgNegativeReturn: cached.avg_negative_return || 0,
+        })
+        setLoading(false)
+        return
+      }
+    } catch {}
+    setLoading(false)
+    // No cache — run fresh backtest
     runBacktest()
-  }, [runBacktest, currentStrategy])
+  }, [selectedSymbol, runBacktest])
+
+  useEffect(() => {
+    loadCachedBacktest()
+  }, [loadCachedBacktest])
 
   // Resolve symbol — debounce 500ms
   const resolveCode = useCallback((code) => {
@@ -379,8 +421,8 @@ export default function App() {
       <main className="main">
         <header className="main-header">
           <h2>{selectedSymbol || '选择股票'}</h2>
-          <button className="run-btn" onClick={runBacktest} disabled={loading}>
-            {loading ? <>Loading...</> : '运行回测'}
+          <button className="run-btn" onClick={runBacktest} disabled={loading || running}>
+            {loading ? '加载中...' : running ? '回测中...' : '运行回测'}
           </button>
         </header>
 
@@ -482,7 +524,7 @@ export default function App() {
             </>
           ) : (
             <div className="placeholder">
-              {loading ? <><span className="loading-spinner" /> 正在加载数据...</> : '选择股票开始回测'}
+              {loading ? <><span className="loading-spinner" /> 加载中...</> : running ? <><span className="loading-spinner" /> 回测中...</> : '选择股票开始回测'}
             </div>
           )}
         </div>

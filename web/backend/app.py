@@ -613,6 +613,36 @@ def run_analyze(
     final_value = engine.cerebro.broker.getvalue()
     total_return = (final_value - cash) / cash * 100
 
+    # Compute stats for saving
+    wins = [t for t in completed_trades if t["is_profitable"]]
+    losses = [t for t in completed_trades if not t["is_profitable"]]
+    win_rate = len(completed_trades) > 0 and len(wins) / len(completed_trades) * 100 or 0
+    avg_win = len(wins) > 0 and sum(w["pnl"] for w in wins) / len(wins) or 0
+    avg_loss = len(losses) > 0 and abs(sum(l["pnl"] for l in losses) / len(losses)) or 1
+    pl_ratio = avg_loss > 0 and (avg_win / avg_loss) or 0
+    avg_pos_ret = len(wins) > 0 and sum((w["sell_price"] - w["buy_price"]) / w["buy_price"] * 100 for w in wins) / len(wins) or 0
+    avg_neg_ret = len(losses) > 0 and sum((l["sell_price"] - l["buy_price"]) / l["buy_price"] * 100 for l in losses) / len(losses) or 0
+
+    # Save to database
+    try:
+        db = _get_db()
+        try:
+            db.save_backtest_result(
+                symbol=symbol, freq=freq, strategy=strategy,
+                total_return_pct=round(total_return, 2), final_value=final_value,
+                trade_count=len(completed_trades),
+                win_count=len(wins), loss_count=len(losses),
+                win_rate=win_rate, pl_ratio=pl_ratio,
+                avg_positive_return=avg_pos_ret, avg_negative_return=avg_neg_ret,
+                trades=completed_trades,
+                kline=kline_rows,
+                returns_curve=returns_curve,
+            )
+        finally:
+            db.close()
+    except Exception:
+        pass  # Don't fail the response if saving fails
+
     return {
         "symbol": symbol,
         "freq": freq,
@@ -628,6 +658,74 @@ def run_analyze(
         "final_value": final_value,
         "total_return_pct": round(total_return, 2),
     }
+
+
+# --- Backtest Cache API ---
+
+@app.get("/api/backtest-cached/{symbol}")
+def get_cached_backtest(symbol: str):
+    """Get the most recent saved backtest result for a symbol, or null."""
+    db = _get_db()
+    try:
+        results = db.get_backtest_history(symbol=symbol, limit=1)
+        if not results:
+            return None
+        row = results[0]
+        detail = db.get_backtest_result(row["id"])
+    finally:
+        db.close()
+    return detail
+
+
+@app.delete("/api/backtest-cached/{symbol}")
+def clear_cached_backtest(symbol: str):
+    """Clear all cached backtest results for a symbol."""
+    db = _get_db()
+    try:
+        db.delete_backtest_by_symbol(symbol)
+    finally:
+        db.close()
+    return {"status": "ok", "symbol": symbol}
+
+
+# --- Backtest History API ---
+
+@app.get("/api/backtest-history")
+def get_backtest_history(
+    symbol: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+):
+    """Get backtest result history."""
+    db = _get_db()
+    try:
+        results = db.get_backtest_history(symbol=symbol, limit=limit)
+    finally:
+        db.close()
+    return results
+
+
+@app.get("/api/backtest-history/{result_id}")
+def get_backtest_result(result_id: int):
+    """Get a single backtest result with trades detail."""
+    db = _get_db()
+    try:
+        result = db.get_backtest_result(result_id)
+    finally:
+        db.close()
+    if result is None:
+        raise HTTPException(404, f"Backtest result {result_id} not found")
+    return result
+
+
+@app.delete("/api/backtest-history/{result_id}")
+def delete_backtest_result(result_id: int):
+    """Delete a backtest result."""
+    db = _get_db()
+    try:
+        db.delete_backtest_result(result_id)
+    finally:
+        db.close()
+    return {"status": "ok", "id": result_id}
 
 
 # --- Symbol Database Update API ---

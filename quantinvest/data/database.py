@@ -72,6 +72,26 @@ class QuantDB:
                 market  TEXT,
                 sector  TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS backtest_results (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol  TEXT NOT NULL,
+                freq    TEXT NOT NULL DEFAULT 'daily',
+                strategy TEXT NOT NULL,
+                total_return_pct REAL,
+                final_value REAL,
+                trade_count INTEGER DEFAULT 0,
+                win_count INTEGER DEFAULT 0,
+                loss_count INTEGER DEFAULT 0,
+                win_rate REAL,
+                pl_ratio REAL,
+                avg_positive_return REAL,
+                avg_negative_return REAL,
+                trades_json TEXT,
+                kline_json TEXT,
+                returns_json TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
             """
         )
         conn.commit()
@@ -81,6 +101,18 @@ class QuantDB:
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+
+        # Migration: add kline_json and returns_json columns
+        try:
+            conn.execute("ALTER TABLE backtest_results ADD COLUMN kline_json TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE backtest_results ADD COLUMN returns_json TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     # -- watchlist --
 
@@ -242,3 +274,108 @@ class QuantDB:
             (like, start, like, keyword, f"{keyword}.%", start, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- backtest results --
+
+    def save_backtest_result(
+        self,
+        symbol: str,
+        freq: str,
+        strategy: str,
+        total_return_pct: float,
+        final_value: float,
+        trade_count: int,
+        win_count: int,
+        loss_count: int,
+        win_rate: float,
+        pl_ratio: float,
+        avg_positive_return: float,
+        avg_negative_return: float,
+        trades: list[dict[str, Any]],
+        kline: list[dict[str, Any]] | None = None,
+        returns_curve: list[dict[str, Any]] | None = None,
+    ) -> int:
+        """Save backtest result to DB. Returns the new row id."""
+        conn = self._active_conn
+        cursor = conn.execute(
+            """INSERT INTO backtest_results
+               (symbol, freq, strategy, total_return_pct, final_value,
+                trade_count, win_count, loss_count, win_rate, pl_ratio,
+                avg_positive_return, avg_negative_return, trades_json,
+                kline_json, returns_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                symbol, freq, strategy,
+                round(total_return_pct, 2), round(final_value, 2),
+                trade_count, win_count, loss_count,
+                round(win_rate, 2), round(pl_ratio, 4),
+                round(avg_positive_return, 2), round(avg_negative_return, 2),
+                json.dumps(trades, ensure_ascii=False),
+                json.dumps(kline or [], ensure_ascii=False),
+                json.dumps(returns_curve or [], ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+    def get_backtest_history(
+        self, symbol: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Query backtest history. Optionally filter by symbol."""
+        conn = self._active_conn
+        if symbol:
+            rows = conn.execute(
+                """SELECT id, symbol, freq, strategy, total_return_pct, final_value,
+                          trade_count, win_count, loss_count, win_rate, pl_ratio,
+                          avg_positive_return, avg_negative_return, created_at
+                   FROM backtest_results
+                   WHERE symbol = ?
+                   ORDER BY id DESC LIMIT ? OFFSET ?""",
+                (symbol, limit, offset),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, symbol, freq, strategy, total_return_pct, final_value,
+                          trade_count, win_count, loss_count, win_rate, pl_ratio,
+                          avg_positive_return, avg_negative_return, created_at
+                   FROM backtest_results
+                   ORDER BY id DESC LIMIT ? OFFSET ?""",
+                (limit, offset),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_backtest_result(self, result_id: int) -> dict[str, Any] | None:
+        """Get a single backtest result by id, including trades JSON."""
+        row = self._active_conn.execute(
+            "SELECT * FROM backtest_results WHERE id = ?", (result_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        if result.get("trades_json"):
+            result["trades"] = json.loads(result.pop("trades_json"))
+        else:
+            result["trades"] = []
+        if result.get("kline_json"):
+            result["kline"] = json.loads(result.pop("kline_json"))
+        else:
+            result["kline"] = []
+        if result.get("returns_json"):
+            result["returns_curve"] = json.loads(result.pop("returns_json"))
+        else:
+            result["returns_curve"] = []
+        return result
+
+    def delete_backtest_result(self, result_id: int) -> None:
+        """Delete a backtest result by id."""
+        self._active_conn.execute(
+            "DELETE FROM backtest_results WHERE id = ?", (result_id,)
+        )
+        self._active_conn.commit()
+
+    def delete_backtest_by_symbol(self, symbol: str) -> None:
+        """Delete all backtest results for a symbol."""
+        self._active_conn.execute(
+            "DELETE FROM backtest_results WHERE symbol = ?", (symbol,)
+        )
+        self._active_conn.commit()
