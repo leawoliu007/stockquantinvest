@@ -23,7 +23,10 @@ os.environ.setdefault("https_proxy", _PROXY)
 from quantinvest.config import load_config
 from quantinvest.data import QuantData, QuantDB
 from quantinvest.backtest import BacktestEngine
-from quantinvest.strategy import MACrossStrategy, MACDStrategy, BollingerStrategy
+from quantinvest.strategy import (
+    MACrossStrategy, MACDStrategy, BollingerStrategy,
+    TurtleStrategy, AlphaStrategy, ReversalStrategy, BreakoutStrategy,
+)
 
 app = FastAPI(title="QuantInvest Web", version="0.1.0")
 
@@ -32,6 +35,10 @@ STRATEGY_MAP: dict[str, Any] = {
     "macross": MACrossStrategy,
     "macd": MACDStrategy,
     "bollinger": BollingerStrategy,
+    "turtle": TurtleStrategy,
+    "alpha": AlphaStrategy,
+    "reversal": ReversalStrategy,
+    "breakout": BreakoutStrategy,
 }
 
 # Supported frequencies
