@@ -64,6 +64,13 @@ class QuantDB:
                 volume REAL,
                 PRIMARY KEY (symbol, date, freq)
             );
+
+            CREATE TABLE IF NOT EXISTS symbols (
+                ticker  TEXT PRIMARY KEY,
+                name    TEXT,
+                market  TEXT,
+                sector  TEXT
+            );
             """
         )
         conn.commit()
@@ -170,3 +177,54 @@ class QuantDB:
             "DELETE FROM kline WHERE symbol = ? AND freq = ?", (symbol, freq)
         )
         self._active_conn.commit()
+
+    # -- symbols --
+
+    def import_symbols(self, df: pd.DataFrame, market: str) -> int:
+        """Import stock symbols from a DataFrame.
+
+        Args:
+            df: DataFrame with 'ticker' and 'name' columns.
+            market: Market tag (e.g. 'CN', 'HK', 'US').
+
+        Returns:
+            Number of rows inserted/updated.
+        """
+        conn = self._active_conn
+        records = []
+        for _, row in df.iterrows():
+            ticker = str(row.get("ticker", ""))
+            name = str(row.get("name", ""))
+            sector = str(row.get("sector", "")) if "sector" in df.columns and pd.notna(row.get("sector")) else ""
+            records.append((ticker, name, market, sector))
+
+        conn.executemany(
+            "INSERT OR REPLACE INTO symbols (ticker, name, market, sector) VALUES (?, ?, ?, ?)",
+            records,
+        )
+        conn.commit()
+        return len(records)
+
+    def search_symbols(self, keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Search symbols by ticker or name (fuzzy match).
+
+        Priority: exact ticker match > ticker starts with keyword > fuzzy match.
+        """
+        like = f"%{keyword}%"
+        start = f"{keyword}%"
+        rows = self._active_conn.execute(
+            """SELECT ticker, name, market FROM symbols
+               WHERE ticker LIKE ? OR ticker LIKE ? OR name LIKE ?
+               ORDER BY
+                 CASE
+                   WHEN ticker = ? THEN 0
+                   WHEN ticker LIKE ? THEN 1
+                   WHEN ticker LIKE ? THEN 2
+                   ELSE 3
+                 END,
+                 market,
+                 name
+               LIMIT ?""",
+            (like, start, like, keyword, f"{keyword}.%", start, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]

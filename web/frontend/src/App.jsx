@@ -20,9 +20,13 @@ export default function App() {
   const [newSymbol, setNewSymbol] = useState('')
   const [strategies, setStrategies] = useState([])
   const [resolvedSymbol, setResolvedSymbol] = useState(null)
+  const [resolvedName, setResolvedName] = useState(null)
   const [resolving, setResolving] = useState(false)
   const [resolveError, setResolveError] = useState(null)
-  const [ambiguousModal, setAmbiguousModal] = useState(null) // { code, alternatives }
+  const [ambiguousModal, setAmbiguousModal] = useState(null) // { code, alternatives, name }
+  const [quotes, setQuotes] = useState({})
+  const [updatingDb, setUpdatingDb] = useState(false)
+  const [updateResult, setUpdateResult] = useState(null)
   const resolveTimer = useRef(null)
   const abortRef = useRef(null)
   const reqSeq = useRef(0) // sequence counter to discard stale responses
@@ -34,6 +38,15 @@ export default function App() {
       setWatchlist(res.data)
       if (res.data.length > 0 && !selectedSymbol) {
         setSelectedSymbol(res.data[0].symbol)
+      }
+      // Fetch quotes for all watchlist symbols
+      if (res.data.length > 0) {
+        const symbols = res.data.map(i => i.symbol).join(",")
+        axios.get(`${API}/quote`, { params: { symbols } }).then(r => {
+          const quoteMap = {}
+          for (const q of r.data) quoteMap[q.symbol] = q
+          setQuotes(quoteMap)
+        }).catch(() => {})
       }
     } catch {}
   }, [selectedSymbol])
@@ -116,6 +129,7 @@ export default function App() {
     code = code.trim()
     if (!code || code.includes(".")) {
       setResolvedSymbol(code || null)
+      setResolvedName(null)
       setResolveError(null)
       return
     }
@@ -126,14 +140,17 @@ export default function App() {
       try {
         const res = await axios.get(`${API}/resolve-symbol`, { params: { code } })
         if (res.data.ambiguous && res.data.alternatives && res.data.alternatives.length > 1) {
-          setAmbiguousModal({ code, alternatives: res.data.alternatives, selected: res.data.symbol })
+          setAmbiguousModal({ code, alternatives: res.data.alternatives, selected: res.data.symbol, name: res.data.name || '' })
           setResolvedSymbol(null)
+          setResolvedName(null)
         } else {
           setResolvedSymbol(res.data.symbol)
+          setResolvedName(res.data.name || null)
         }
       } catch (e) {
         setResolveError(e.response?.data?.detail || "未找到")
         setResolvedSymbol(null)
+        setResolvedName(null)
       } finally {
         setResolving(false)
       }
@@ -141,13 +158,15 @@ export default function App() {
   }, [])
 
   // Add symbol
-  const addSymbol = async (symbol) => {
+  const addSymbol = async (symbol, name) => {
     const finalSymbol = symbol || resolvedSymbol || newSymbol.trim()
+    const finalName = name || resolvedName || ''
     if (!finalSymbol) return
     try {
-      await axios.post(`${API}/watchlist`, { symbol: finalSymbol, name: '', market: '' })
+      await axios.post(`${API}/watchlist`, { symbol: finalSymbol, name: finalName, market: '' })
       setNewSymbol('')
       setResolvedSymbol(null)
+      setResolvedName(null)
       setResolveError(null)
       setAmbiguousModal(null)
       await loadWatchlist()
@@ -161,6 +180,20 @@ export default function App() {
       if (selectedSymbol === symbol) setSelectedSymbol(null)
       await loadWatchlist()
     } catch {}
+  }
+
+  // Update symbols database
+  const updateDb = async () => {
+    setUpdatingDb(true)
+    setUpdateResult(null)
+    try {
+      const res = await axios.post(`${API}/update-symbols`)
+      setUpdateResult(res.data)
+    } catch (e) {
+      setUpdateResult({ status: 'error', message: e.message })
+    } finally {
+      setUpdatingDb(false)
+    }
   }
 
   // --- K-line chart ---
@@ -180,22 +213,42 @@ export default function App() {
         </div>
 
         <div className="watchlist">
-          {watchlist.map(item => (
-            <div
-              key={item.symbol}
-              className={`watchlist-item ${selectedSymbol === item.symbol ? 'active' : ''}`}
-              onClick={() => setSelectedSymbol(item.symbol)}
-            >
-              <div>
-                <div className="watchlist-symbol">{item.symbol}</div>
-                {item.name && <div className="watchlist-name">{item.name}</div>}
+          {watchlist.map(item => {
+            const quote = quotes[item.symbol]
+            const changePct = quote?.change_pct
+            return (
+              <div
+                key={item.symbol}
+                className={`watchlist-item ${selectedSymbol === item.symbol ? 'active' : ''}`}
+                onClick={() => setSelectedSymbol(item.symbol)}
+              >
+                <div>
+                  <div className="watchlist-symbol">{item.symbol}</div>
+                  {item.name && <div className="watchlist-name">{item.name}</div>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {quote && (
+                    <>
+                      {quote.price !== null && quote.price !== undefined && (
+                        <span className={`watchlist-price ${changePct >= 0 ? 'positive' : 'negative'}`}>
+                          {quote.price}
+                        </span>
+                      )}
+                      {changePct !== null && changePct !== undefined && (
+                        <span className={`watchlist-change ${changePct >= 0 ? 'positive' : 'negative'}`}>
+                          {changePct >= 0 ? '+' : ''}{changePct}%
+                        </span>
+                      )}
+                    </>
+                  )}
+                  <button
+                    className="watchlist-remove"
+                    onClick={(e) => { e.stopPropagation(); removeSymbol(item.symbol) }}
+                  >×</button>
+                </div>
               </div>
-              <button
-                className="watchlist-remove"
-                onClick={(e) => { e.stopPropagation(); removeSymbol(item.symbol) }}
-              >×</button>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         <form className="add-form" onSubmit={e => { e.preventDefault(); addSymbol() }}>
@@ -207,7 +260,9 @@ export default function App() {
             />
             {resolving && <span className="resolve-spinner" />}
             {resolvedSymbol && !resolving && (
-              <span className="resolved-preview" onClick={() => addSymbol()} title="点击添加">{resolvedSymbol}</span>
+              <span className="resolved-preview" onClick={() => addSymbol()} title="点击添加">
+                {resolvedSymbol}{resolvedName ? ` — ${resolvedName}` : ''}
+              </span>
             )}
             {resolveError && <span className="resolve-error">{resolveError}</span>}
           </div>
@@ -219,13 +274,13 @@ export default function App() {
           <div className="modal-overlay" onClick={() => setAmbiguousModal(null)}>
             <div className="modal-content" onClick={e => e.stopPropagation()}>
               <h3>选择市场</h3>
-              <p>代码 <strong>{ambiguousModal.code}</strong> 可能属于以下市场：</p>
+              <p>代码 <strong>{ambiguousModal.code}</strong>（{ambiguousModal.name}）可能属于以下市场：</p>
               <div className="market-options">
                 {ambiguousModal.alternatives.map(sym => (
                   <button
                     key={sym}
                     className={`market-option ${sym === ambiguousModal.selected ? 'selected' : ''}`}
-                    onClick={() => { addSymbol(sym); setAmbiguousModal(null) }}
+                    onClick={() => { addSymbol(sym, ambiguousModal.name); setAmbiguousModal(null) }}
                   >
                     {sym}
                   </button>
@@ -260,6 +315,28 @@ export default function App() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Database update */}
+        <div className="sidebar-section">
+          <h3>数据库</h3>
+          <button
+            className={`db-update-btn ${updatingDb ? 'loading' : ''}`}
+            onClick={updateDb}
+            disabled={updatingDb}
+          >
+            {updatingDb ? '更新中...' : '刷新股票库'}
+          </button>
+          {updateResult && (
+            <div className="update-result">
+              {updateResult.sources && Object.entries(updateResult.sources).map(([k, v]) => (
+                <div key={k} className={`update-item ${v === 'ok' ? 'success' : 'error'}`}>
+                  {k}: {typeof v === 'string' && v !== 'ok' ? v.substring(0, 50) : v}
+                </div>
+              ))}
+              {updateResult.total && <div className="update-total">{updateResult.total}</div>}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -336,6 +413,37 @@ export default function App() {
                 <ReactECharts key={`r-${selectedSymbol}-${strategy}-${freq}`} option={returnsOption} style={{ height: '100%', width: '100%' }}
                   opts={{ renderer: 'canvas' }} />
               </div>
+              {completedTrades.length > 0 && (
+                <div className="trades-table-wrapper">
+                  <table className="trades-table">
+                    <thead>
+                      <tr>
+                        <th>买入日期</th>
+                        <th>卖出日期</th>
+                        <th>买入价</th>
+                        <th>卖出价</th>
+                        <th>收益</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {completedTrades.map((t, i) => {
+                        const pnlPct = ((t.sell_price - t.buy_price) / t.buy_price * 100).toFixed(2)
+                        return (
+                          <tr key={i}>
+                            <td>{t.buy_date}</td>
+                            <td>{t.sell_date}</td>
+                            <td>{t.buy_price.toFixed(3)}</td>
+                            <td>{t.sell_price.toFixed(3)}</td>
+                            <td className={t.is_profitable ? 'positive' : 'negative'}>
+                              {t.is_profitable ? '+' : ''}{pnlPct}%
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           ) : (
             <div className="placeholder">

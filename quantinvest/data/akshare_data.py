@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import ClassVar
 
 import akshare as ak
 import pandas as pd
@@ -222,23 +221,6 @@ class AkShareData:
         }
         available = {k: v for k, v in cols.items() if k in df.columns}
         df = df.rename(columns=available).filter(list(cols.values()))
-        df["date"] = pd.to_datetime(df["date"])
-        for col in ("open", "close", "high", "low", "volume"):
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df.set_index("date").sort_index()
-
-    @staticmethod
-    def _clean_min(df: pd.DataFrame) -> pd.DataFrame:
-        """Clean minute-level data from stock_zh_a_hist_min_em."""
-        cols = {
-            "时间": "date",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-        }
-        df = df.rename(columns=cols).filter(list(cols.values()))
         df["date"] = pd.to_datetime(df["date"])
         for col in ("open", "close", "high", "low", "volume"):
             df[col] = pd.to_numeric(df[col], errors="coerce")

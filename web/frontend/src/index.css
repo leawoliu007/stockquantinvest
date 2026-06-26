@@ -101,6 +101,42 @@ body {
   color: var(--text-secondary);
 }
 
+.watchlist-price {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.watchlist-price.positive {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.watchlist-price.negative {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.watchlist-change {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.watchlist-change.positive {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.watchlist-change.negative {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
 .watchlist-remove {
   background: none;
   border: none;
@@ -504,4 +540,106 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* --- Trades table --- */
+.trades-table-wrapper {
+  background: var(--bg-card);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.trades-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.trades-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.trades-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+}
+
+.trades-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.trades-table .positive {
+  color: var(--green);
+}
+
+.trades-table .negative {
+  color: var(--red);
+}
+
+/* --- Database update button --- */
+
+.db-update-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.db-update-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.db-update-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.update-result {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-page);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.update-item {
+  padding: 2px 0;
+  color: var(--text-secondary);
+}
+
+.update-item.success {
+  color: var(--green);
+}
+
+.update-item.error {
+  color: var(--red);
+}
+
+.update-total {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-weight: 600;
 }

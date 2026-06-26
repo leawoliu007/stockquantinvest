@@ -69,8 +69,33 @@ def _get_db() -> QuantDB:
 
 @app.get("/api/resolve-symbol")
 def resolve_symbol(code: str = Query(..., description="Raw stock code (e.g. 600519 or 510300)")):
-    """Try common market suffixes and return the first one that has data."""
-    # Determine candidate suffixes based on input pattern
+    """Resolve stock code to symbol+name. Check local DB first, then remote APIs."""
+    # 1. Try local symbols table first (instant)
+    db = _get_db()
+    try:
+        local_hits = db.search_symbols(code, limit=20)
+        if local_hits:
+            suffixes = _guess_suffixes(code)
+            # Filter to candidates with matching suffix
+            matched = [h for h in local_hits if any(h["ticker"].endswith(s) for s in suffixes)]
+            if matched:
+                hit = matched[0]
+                db.close()
+                return {"symbol": hit["ticker"], "name": hit["name"], "ambiguous": False}
+
+            # If no exact suffix match, still return local hits as alternatives
+            primary = local_hits[0]
+            db.close()
+            return {
+                "symbol": primary["ticker"],
+                "name": primary["name"],
+                "ambiguous": len(local_hits) > 1,
+                "alternatives": [h["ticker"] for h in local_hits[:5]],
+            }
+    finally:
+        db.close()
+
+    # 2. Fallback: remote data sources (slow)
     suffixes = _guess_suffixes(code)
 
     from quantinvest.data import BaoStockData, AkShareData, YFinanceData
@@ -113,10 +138,56 @@ def resolve_symbol(code: str = Query(..., description="Raw stock code (e.g. 6005
 
     if len(results) == 0:
         raise HTTPException(404, f"No data found for code '{code}' in any market")
+
+    # Pick primary result and fetch stock name
+    primary = results[0]
+    symbol = primary["symbol"]
+    name = _fetch_stock_name(symbol)
+
     if len(results) == 1:
-        return {"symbol": results[0]["symbol"], "ambiguous": False}
+        return {"symbol": symbol, "name": name, "ambiguous": False}
     # Multiple matches — return all for frontend to pick
-    return {"symbol": results[0]["symbol"], "ambiguous": True, "alternatives": [r["symbol"] for r in results]}
+    return {"symbol": symbol, "name": name, "ambiguous": True, "alternatives": [r["symbol"] for r in results]}
+
+
+def _fetch_stock_name(symbol: str) -> str:
+    """Query stock name from data sources based on symbol suffix."""
+    code = symbol.replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+    try:
+        if symbol.endswith((".SH", ".SZ", ".BJ")):
+            import baostock as bs
+            # Map suffix to baostock prefix
+            prefix = {"SH": "sh", "SZ": "sz", "BJ": "bj"}[symbol.split(".")[-1]]
+            bs_code = f"{prefix}.{code.zfill(6)}"
+            lg = bs.login()
+            try:
+                rs = bs.query_stock_basic(code=bs_code)
+                if rs.error_msg == "success":
+                    while rs.next():
+                        return rs.get_row_data()[1]  # code_name
+            finally:
+                bs.logout()
+        elif symbol.endswith(".US"):
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker(symbol.replace(".US", ""))
+                info = ticker.info
+                if info and "shortName" in info:
+                    return info["shortName"]
+            except Exception:
+                pass
+        elif symbol.endswith(".HK"):
+            try:
+                import akshare as ak
+                df = ak.stock_hk_spot_em()
+                row = df[df["代码"] == code]
+                if not row.empty:
+                    return str(row.iloc[0]["名称"])
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return code  # fallback to code itself
 
 
 def _guess_suffixes(code: str) -> list[str]:
@@ -185,6 +256,146 @@ def remove_watchlist(symbol: str):
     finally:
         db.close()
     return {"status": "ok", "symbol": symbol}
+
+
+# --- Quote API ---
+
+def _get_fallback_quote(symbol: str) -> dict:
+    """Fallback: get latest price from historical data (baostock / akshare)."""
+    from quantinvest.data import BaoStockData, AkShareData
+    from datetime import date, timedelta
+
+    end_date = date.today().strftime("%Y-%m-%d")
+    start_date = (date.today() - timedelta(days=10)).strftime("%Y-%m-%d")
+
+    for cls in ([BaoStockData] if symbol.endswith((".SH", ".SZ")) else []):
+        try:
+            provider = cls()
+            df = provider.fetch(symbol, start=start_date, end=end_date, freq="daily")
+            if not df.empty and len(df) >= 2:
+                price = round(float(df["close"].iloc[-1]), 3)
+                prev_close = round(float(df["close"].iloc[-2]), 3)
+                change_pct = round((price - prev_close) / prev_close * 100, 2)
+                return {"price": price, "change_pct": change_pct, "prev_close": prev_close}
+        except Exception:
+            continue
+
+    try:
+        provider = AkShareData()
+        df = provider.fetch(symbol, start=start_date, end=end_date, freq="daily")
+        if not df.empty and len(df) >= 2:
+            price = round(float(df["close"].iloc[-1]), 3)
+            prev_close = round(float(df["close"].iloc[-2]), 3)
+            change_pct = round((price - prev_close) / prev_close * 100, 2)
+            return {"price": price, "change_pct": change_pct, "prev_close": prev_close}
+    except Exception:
+        pass
+
+    return {"price": None, "change_pct": None, "prev_close": None}
+
+
+@app.get("/api/quote")
+def get_quotes(symbols: str = Query(..., description="Comma-separated symbols (e.g. 600519.SH,0700.HK)")):
+    """Fetch real-time price and daily change % for given symbols."""
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    results = []
+
+    # Batch fetch A-share spot data via akshare
+    a_symbols = [s for s in symbol_list if s.endswith((".SH", ".SZ"))]
+    other_symbols = [s for s in symbol_list if not s.endswith((".SH", ".SZ"))]
+
+    # A-share: use akshare real-time snapshot
+    if a_symbols:
+        try:
+            import akshare as ak
+            # Fetch stocks
+            stock_codes = []
+            etf_codes = []
+            for s in a_symbols:
+                code = s.replace(".SH", "").replace(".SZ", "")
+                # ETF codes start with 51/15/16/56 etc.
+                if code[:2] in ("51", "15", "16", "56", "10", "50", "12"):
+                    etf_codes.append(code)
+                else:
+                    stock_codes.append(code)
+
+            spot_results = {}
+            if stock_codes:
+                try:
+                    df = ak.stock_zh_a_spot_em()
+                    for code in stock_codes:
+                        row = df[df["代码"] == code]
+                        if not row.empty:
+                            r = row.iloc[0]
+                            sym = code + ".SH" if code.startswith(("6", "9")) else code + ".SZ"
+                            spot_results[sym] = {
+                                "price": round(float(r.get("最新价", 0)), 3),
+                                "change_pct": round(float(r.get("涨跌幅", 0)), 2),
+                                "prev_close": round(float(r.get("昨收", 0)), 3),
+                            }
+                except Exception:
+                    pass
+
+            if etf_codes:
+                try:
+                    df = ak.fund_etf_spot_em()
+                    for code in etf_codes:
+                        row = df[df["代码"] == code]
+                        if not row.empty:
+                            r = row.iloc[0]
+                            sym = code + ".SH" if code.startswith(("5", "1")) else code + ".SZ"
+                            spot_results[sym] = {
+                                "price": round(float(r.get("最新价", 0)), 3),
+                                "change_pct": round(float(r.get("涨跌幅", 0)), 2),
+                                "prev_close": round(float(r.get("昨收", 0)), 3),
+                            }
+                except Exception:
+                    pass
+
+            for s in a_symbols:
+                if s in spot_results:
+                    results.append({"symbol": s, **spot_results[s]})
+                else:
+                    # Fallback: fetch last 2 trading days via baostock / akshare historical
+                    fallback = _get_fallback_quote(s)
+                    results.append({"symbol": s, **fallback})
+        except Exception:
+            for s in a_symbols:
+                results.append({"symbol": s, "price": None, "change_pct": None, "prev_close": None})
+
+    # HK / US: use yfinance (with proxy if available)
+    import os
+    proxy = os.environ.get("http_proxy", "http://192.168.0.114:7890")
+    os.environ["HTTP_PROXY"] = proxy
+    os.environ["HTTPS_PROXY"] = proxy
+
+    for symbol in other_symbols:
+        try:
+            import yfinance as yf
+            ticker_sym = symbol.replace(".US", "")
+            ticker = yf.Ticker(ticker_sym)
+            info = ticker.fast_info
+            price = round(info.last_price, 3) if hasattr(info, "last_price") else None
+
+            # Get previous close for change %
+            prev_close = None
+            change_pct = None
+            if price:
+                try:
+                    hist = ticker.history(period="5d")
+                    if not hist.empty and len(hist) >= 2:
+                        prev_close = round(float(hist["Close"].iloc[-2]), 3)
+                        change_pct = round((price - prev_close) / prev_close * 100, 2)
+                    elif not hist.empty:
+                        prev_close = round(float(hist["Close"].iloc[-1]), 3)
+                except Exception:
+                    pass
+
+            results.append({"symbol": symbol, "price": price, "change_pct": change_pct, "prev_close": prev_close})
+        except Exception:
+            results.append({"symbol": symbol, "price": None, "change_pct": None, "prev_close": None})
+
+    return results
 
 
 # --- Strategies API ---
@@ -380,3 +591,62 @@ def run_analyze(
         "final_value": final_value,
         "total_return_pct": round(total_return, 2),
     }
+
+
+# --- Symbol Database Update API ---
+
+@app.post("/api/update-symbols")
+def update_symbols():
+    """Trigger a full refresh of the symbols database from all sources."""
+    import subprocess as subp
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    result = {"status": "ok", "sources": {}}
+
+    # 1. Fetch A-share stocks + ETFs via baostock
+    try:
+        r = subp.run(
+            ["python3", str(project_root / "examples" / "fetch_a_stock_list.py")],
+            capture_output=True, text=True, timeout=120, cwd=str(project_root),
+        )
+        if r.returncode == 0:
+            result["sources"]["a_share"] = "ok"
+        else:
+            result["sources"]["a_share"] = f"error: {r.stderr.strip()[-200:]}"
+    except Exception as e:
+        result["sources"]["a_share"] = f"error: {e}"
+
+    # 2. Fetch index constituents (S&P 500, NASDAQ-100, HSI) via Wikipedia
+    try:
+        r = subp.run(
+            ["python3", str(project_root / "examples" / "fetch_index_constituents.py")],
+            capture_output=True, text=True, timeout=120, cwd=str(project_root),
+        )
+        if r.returncode == 0:
+            result["sources"]["indices"] = "ok"
+        else:
+            result["sources"]["indices"] = f"error: {r.stderr.strip()[-200:]}"
+    except Exception as e:
+        result["sources"]["indices"] = f"error: {e}"
+
+    # 3. Import all CSVs into data.db
+    try:
+        r = subp.run(
+            ["python3", str(project_root / "examples" / "import_symbols.py")],
+            capture_output=True, text=True, timeout=60, cwd=str(project_root),
+        )
+        if r.returncode == 0:
+            # Parse total count from output
+            output = r.stdout.strip()
+            result["sources"]["import"] = "ok"
+            for line in output.split("\n"):
+                if "Total:" in line:
+                    result["total"] = line.strip()
+                    break
+        else:
+            result["sources"]["import"] = f"error: {r.stderr.strip()[-200:]}"
+    except Exception as e:
+        result["sources"]["import"] = f"error: {e}"
+
+    return result

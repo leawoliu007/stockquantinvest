@@ -4,6 +4,7 @@ import datetime as dt
 import os
 
 import yfinance as yf
+import pandas as pd
 
 from ..config import load_config
 
