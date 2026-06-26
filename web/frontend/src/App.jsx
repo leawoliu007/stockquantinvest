@@ -177,8 +177,22 @@ export default function App() {
   const removeSymbol = async (symbol) => {
     try {
       await axios.delete(`${API}/watchlist/${symbol}`)
-      if (selectedSymbol === symbol) setSelectedSymbol(null)
-      await loadWatchlist()
+      const wasSelected = selectedSymbol === symbol
+      // Manually reload to avoid stale closure on selectedSymbol
+      const res = await axios.get(`${API}/watchlist`)
+      setWatchlist(res.data)
+      if (wasSelected) {
+        setSelectedSymbol(res.data.length > 0 ? res.data[0].symbol : null)
+        // Refresh quotes for the updated watchlist
+        if (res.data.length > 0) {
+          const symbols = res.data.map(i => i.symbol).join(",")
+          axios.get(`${API}/quote`, { params: { symbols } }).then(r => {
+            const quoteMap = {}
+            for (const q of r.data) quoteMap[q.symbol] = q
+            setQuotes(quoteMap)
+          }).catch(() => {})
+        }
+      }
     } catch {}
   }
 

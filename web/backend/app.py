@@ -57,12 +57,16 @@ class AnalyzeRequest(BaseModel):
 
 # --- Helper: get DB connection ---
 
+_db_instance: QuantDB | None = None
+
 def _get_db() -> QuantDB:
-    cfg = load_config()
-    db = QuantDB(cfg.db_path)
-    # Ensure watchlist JSON is imported
-    db.save_watchlist_from_file(cfg.watchlist_file)
-    return db
+    global _db_instance
+    if _db_instance is None:
+        cfg = load_config()
+        _db_instance = QuantDB(cfg.db_path)
+        # Import watchlist JSON only once at startup
+        _db_instance.save_watchlist_from_file(cfg.watchlist_file)
+    return _db_instance
 
 
 # --- Resolve Symbol API ---
