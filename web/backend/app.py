@@ -44,6 +44,11 @@ class WatchlistItem(BaseModel):
     symbol: str
     name: str = ""
     market: str = ""
+    strategy: str = "macross"
+
+
+class StrategyUpdate(BaseModel):
+    strategy: str
 
 
 class AnalyzeRequest(BaseModel):
@@ -245,10 +250,21 @@ def add_watchlist(item: WatchlistItem):
     """Add a symbol to the watchlist."""
     db = _get_db()
     try:
-        db.add_watchlist(item.symbol, item.name, item.market)
+        db.add_watchlist(item.symbol, item.name, item.market, item.strategy)
     finally:
         db.close()
     return {"status": "ok", "symbol": item.symbol}
+
+
+@app.patch("/api/watchlist/{symbol}")
+def update_watchlist_strategy(symbol: str, body: StrategyUpdate):
+    """Update strategy for a watchlist item."""
+    db = _get_db()
+    try:
+        db.update_strategy(symbol, body.strategy)
+    finally:
+        db.close()
+    return {"status": "ok", "symbol": symbol, "strategy": body.strategy}
 
 
 @app.delete("/api/watchlist/{symbol}")
@@ -416,12 +432,23 @@ def list_strategies():
 def run_analyze(
     symbol: str = Query(..., description="Stock symbol (e.g. 600519.SH)"),
     freq: str = Query("daily", description="Data frequency"),
-    strategy: str = Query("macross", description="Strategy name"),
+    strategy: Optional[str] = Query(None, description="Strategy name (defaults to watchlist setting)"),
     start: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     cash: float = Query(100_000.0, description="Initial cash"),
 ):
     """Run backtest and return kline data, equity curve, and trade signals."""
+    # Default strategy from watchlist DB, fallback to 'macross'
+    if not strategy:
+        db = _get_db()
+        try:
+            row = db._active_conn.execute(
+                "SELECT strategy FROM watchlist WHERE symbol = ?", (symbol,)
+            ).fetchone()
+            strategy = row["strategy"] if row and row["strategy"] else "macross"
+        finally:
+            db.close()
+
     if strategy not in STRATEGY_MAP:
         raise HTTPException(400, f"Unknown strategy: {strategy}. Choose from {list(STRATEGY_MAP.keys())}")
 

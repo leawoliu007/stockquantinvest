@@ -50,6 +50,7 @@ class QuantDB:
                 symbol  TEXT PRIMARY KEY,
                 name    TEXT,
                 market  TEXT,
+                strategy TEXT DEFAULT 'macross',
                 added_at TEXT DEFAULT (datetime('now'))
             );
 
@@ -74,6 +75,12 @@ class QuantDB:
             """
         )
         conn.commit()
+        # Migration: add strategy column if it doesn't exist
+        try:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN strategy TEXT DEFAULT 'macross'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     # -- watchlist --
 
@@ -95,20 +102,27 @@ class QuantDB:
     def get_watchlist(self) -> list[dict[str, Any]]:
         """Return all watchlist entries as a list of dicts."""
         rows = self._active_conn.execute(
-            "SELECT symbol, name, market, added_at FROM watchlist ORDER BY added_at"
+            "SELECT symbol, name, market, strategy, added_at FROM watchlist ORDER BY added_at"
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def add_watchlist(self, symbol: str, name: str = "", market: str = "") -> None:
+    def add_watchlist(self, symbol: str, name: str = "", market: str = "", strategy: str = "macross") -> None:
         conn = self._active_conn
         conn.execute(
-            "INSERT OR IGNORE INTO watchlist (symbol, name, market) VALUES (?, ?, ?)",
-            (symbol, name, market),
+            "INSERT OR IGNORE INTO watchlist (symbol, name, market, strategy) VALUES (?, ?, ?, ?)",
+            (symbol, name, market, strategy),
         )
         conn.commit()
 
     def remove_watchlist(self, symbol: str) -> None:
         self._active_conn.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
+        self._active_conn.commit()
+
+    def update_strategy(self, symbol: str, strategy: str) -> None:
+        """Update the strategy for a watchlist item."""
+        self._active_conn.execute(
+            "UPDATE watchlist SET strategy = ? WHERE symbol = ?", (strategy, symbol)
+        )
         self._active_conn.commit()
 
     # -- kline --

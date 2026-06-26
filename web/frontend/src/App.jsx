@@ -7,7 +7,6 @@ const API = '/api'
 export default function App() {
   const [watchlist, setWatchlist] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
-  const [strategy, setStrategy] = useState('macross')
   const [freq, setFreq] = useState('daily')
   const [loading, setLoading] = useState(false)
   const [klineData, setKlineData] = useState([])
@@ -60,6 +59,22 @@ export default function App() {
     loadWatchlist()
   }, [loadWatchlist])
 
+  // Get strategy for selected symbol from watchlist data
+  const getSelectedStrategy = () => {
+    const item = watchlist.find(w => w.symbol === selectedSymbol)
+    return item?.strategy || 'macross'
+  }
+
+  // Change strategy for a specific symbol
+  const changeStrategy = async (symbol, newStrategy) => {
+    try {
+      await axios.patch(`${API}/watchlist/${symbol}`, { strategy: newStrategy })
+      setWatchlist(prev => prev.map(w =>
+        w.symbol === symbol ? { ...w, strategy: newStrategy } : w
+      ))
+    } catch {}
+  }
+
   // Run backtest
   const runBacktest = useCallback(async () => {
     if (!selectedSymbol) return
@@ -70,7 +85,7 @@ export default function App() {
     setLoading(true)
     try {
       const res = await axios.get(`${API}/analyze`, {
-        params: { symbol: selectedSymbol, freq, strategy },
+        params: { symbol: selectedSymbol, freq },
       })
       // Discard stale response if a newer request was triggered
       if (seq !== reqSeq.current) return
@@ -117,9 +132,9 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [selectedSymbol, freq, strategy])
+  }, [selectedSymbol, freq])
 
-  // Auto-run when symbol/strategy/freq changes
+  // Auto-run when symbol/freq changes (strategy comes from DB per-symbol)
   useEffect(() => {
     runBacktest()
   }, [runBacktest])
@@ -230,6 +245,7 @@ export default function App() {
           {watchlist.map(item => {
             const quote = quotes[item.symbol]
             const changePct = quote?.change_pct
+            const itemStrategy = item.strategy || 'macross'
             return (
               <div
                 key={item.symbol}
@@ -255,6 +271,16 @@ export default function App() {
                       )}
                     </>
                   )}
+                  <select
+                    className="watchlist-strategy"
+                    value={itemStrategy}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => changeStrategy(item.symbol, e.target.value)}
+                  >
+                    {strategies.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
                   <button
                     className="watchlist-remove"
                     onClick={(e) => { e.stopPropagation(); removeSymbol(item.symbol) }}
@@ -304,17 +330,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        <div className="strategy-selector">
-          <div className="sidebar-section" style={{ padding: 0 }}>
-            <h3>策略</h3>
-            <select value={strategy} onChange={e => setStrategy(e.target.value)}>
-              {strategies.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        </div>
 
         <div className="freq-selector">
           <div className="sidebar-section" style={{ padding: 0 }}>
@@ -420,11 +435,11 @@ export default function App() {
           {klineData.length > 0 ? (
             <>
               <div className="chart-panel kline">
-                <ReactECharts key={`k-${selectedSymbol}-${strategy}-${freq}`} option={klineOption} style={{ height: '100%', width: '100%' }}
+                <ReactECharts key={`k-${selectedSymbol}-${getSelectedStrategy()}-${freq}`} option={klineOption} style={{ height: '100%', width: '100%' }}
                   opts={{ renderer: 'canvas' }} />
               </div>
               <div className="chart-panel equity">
-                <ReactECharts key={`r-${selectedSymbol}-${strategy}-${freq}`} option={returnsOption} style={{ height: '100%', width: '100%' }}
+                <ReactECharts key={`r-${selectedSymbol}-${getSelectedStrategy()}-${freq}`} option={returnsOption} style={{ height: '100%', width: '100%' }}
                   opts={{ renderer: 'canvas' }} />
               </div>
               {completedTrades.length > 0 && (

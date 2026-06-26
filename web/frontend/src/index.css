@@ -137,6 +137,24 @@ body {
   background: rgba(239, 68, 68, 0.1);
 }
 
+.watchlist-strategy {
+  font-size: 10px;
+  padding: 2px 4px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.watchlist-strategy option {
+  background: #1f2937;
+  color: #f3f4f6;
+}
+
 .watchlist-remove {
   background: none;
   border: none;
