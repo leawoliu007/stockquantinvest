@@ -72,6 +72,10 @@ export default function App() {
       setWatchlist(prev => prev.map(w =>
         w.symbol === symbol ? { ...w, strategy: newStrategy } : w
       ))
+      // Re-run backtest if this symbol is selected
+      if (symbol === selectedSymbol) {
+        runBacktest()
+      }
     } catch {}
   }
 
@@ -134,7 +138,7 @@ export default function App() {
     }
   }, [selectedSymbol, freq])
 
-  // Auto-run when symbol/freq changes (strategy comes from DB per-symbol)
+  // Auto-run when symbol/freq changes (strategy read from DB per-symbol in backend)
   useEffect(() => {
     runBacktest()
   }, [runBacktest])
@@ -229,7 +233,8 @@ export default function App() {
   const klineOption = createKlineOption(klineData, completedTrades)
 
   // --- Returns chart ---
-  const returnsOption = createReturnsOption(returnsCurve, bhBenchmark, completedTrades, klineData.map(d => d.date))
+  const cleanDates = klineData.filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0).map(d => d.date)
+  const returnsOption = createReturnsOption(returnsCurve, bhBenchmark, completedTrades, cleanDates)
 
   return (
     <div className="app">
@@ -489,9 +494,11 @@ export default function App() {
 /* ===== ECharts option builders ===== */
 
 function createKlineOption(kline, completedTrades) {
-  const dates = kline.map(d => d.date)
-  const ohlc = kline.map(d => [d.open, d.close, d.low, d.high])
-  const volumes = kline.map(d => d.volume)
+  // Filter out zero-value rows (bad data from baostock)
+  const clean = kline.filter(d => d.open > 0 && d.close > 0 && d.high > 0 && d.low > 0)
+  const dates = clean.map(d => d.date)
+  const ohlc = clean.map(d => [d.open, d.close, d.low, d.high])
+  const volumes = clean.map(d => d.volume)
 
   // Build markArea: each trade is [start, end] pair with color
   // Profit trade: red rgba(239,83,80,0.15); Loss trade: green rgba(38,166,154,0.15)
@@ -568,7 +575,7 @@ function createKlineOption(kline, completedTrades) {
         yAxisIndex: 1,
         data: volumes.map((v, i) => ({
           value: v,
-          itemStyle: { color: kline[i].close >= kline[i].open ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)' },
+          itemStyle: { color: clean[i].close >= clean[i].open ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)' },
         })),
       },
     ],
