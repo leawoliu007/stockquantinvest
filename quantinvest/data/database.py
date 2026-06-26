@@ -78,6 +78,7 @@ class QuantDB:
                 symbol  TEXT NOT NULL,
                 freq    TEXT NOT NULL DEFAULT 'daily',
                 strategy TEXT NOT NULL,
+                strategy_params TEXT DEFAULT '{}',
                 total_return_pct REAL,
                 final_value REAL,
                 trade_count INTEGER DEFAULT 0,
@@ -114,6 +115,20 @@ class QuantDB:
         except sqlite3.OperationalError:
             pass
 
+        # Migration: add strategy_params column to watchlist (JSON string)
+        try:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN strategy_params TEXT DEFAULT '{}'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add strategy_params column to backtest_results
+        try:
+            conn.execute("ALTER TABLE backtest_results ADD COLUMN strategy_params TEXT DEFAULT '{}'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
     # -- watchlist --
 
     def save_watchlist_from_file(self, filepath: str | Path) -> None:
@@ -134,15 +149,24 @@ class QuantDB:
     def get_watchlist(self) -> list[dict[str, Any]]:
         """Return all watchlist entries as a list of dicts."""
         rows = self._active_conn.execute(
-            "SELECT symbol, name, market, strategy, added_at FROM watchlist ORDER BY added_at"
+            "SELECT symbol, name, market, strategy, strategy_params, added_at FROM watchlist ORDER BY added_at"
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Parse strategy_params JSON
+            try:
+                d["strategy_params"] = json.loads(d.get("strategy_params") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                d["strategy_params"] = {}
+            result.append(d)
+        return result
 
-    def add_watchlist(self, symbol: str, name: str = "", market: str = "", strategy: str = "macross") -> None:
+    def add_watchlist(self, symbol: str, name: str = "", market: str = "", strategy: str = "macross", strategy_params: dict[str, Any] | None = None) -> None:
         conn = self._active_conn
         conn.execute(
-            "INSERT OR IGNORE INTO watchlist (symbol, name, market, strategy) VALUES (?, ?, ?, ?)",
-            (symbol, name, market, strategy),
+            "INSERT OR IGNORE INTO watchlist (symbol, name, market, strategy, strategy_params) VALUES (?, ?, ?, ?, ?)",
+            (symbol, name, market, strategy, json.dumps(strategy_params or {}, ensure_ascii=False)),
         )
         conn.commit()
 
@@ -150,10 +174,25 @@ class QuantDB:
         self._active_conn.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol,))
         self._active_conn.commit()
 
-    def update_strategy(self, symbol: str, strategy: str) -> None:
-        """Update the strategy for a watchlist item."""
+    def update_strategy(self, symbol: str, strategy: str, strategy_params: dict[str, Any] | None = None) -> None:
+        """Update the strategy for a watchlist item. Optionally update params too."""
+        conn = self._active_conn
+        if strategy_params is not None:
+            conn.execute(
+                "UPDATE watchlist SET strategy = ?, strategy_params = ? WHERE symbol = ?",
+                (strategy, json.dumps(strategy_params, ensure_ascii=False), symbol),
+            )
+        else:
+            conn.execute(
+                "UPDATE watchlist SET strategy = ? WHERE symbol = ?", (strategy, symbol)
+            )
+        conn.commit()
+
+    def update_strategy_params(self, symbol: str, strategy_params: dict[str, Any]) -> None:
+        """Update the custom params for a watchlist item's strategy."""
         self._active_conn.execute(
-            "UPDATE watchlist SET strategy = ? WHERE symbol = ?", (strategy, symbol)
+            "UPDATE watchlist SET strategy_params = ? WHERE symbol = ?",
+            (json.dumps(strategy_params, ensure_ascii=False), symbol),
         )
         self._active_conn.commit()
 
@@ -294,18 +333,19 @@ class QuantDB:
         trades: list[dict[str, Any]],
         kline: list[dict[str, Any]] | None = None,
         returns_curve: list[dict[str, Any]] | None = None,
+        strategy_params: dict[str, Any] | None = None,
     ) -> int:
         """Save backtest result to DB. Returns the new row id."""
         conn = self._active_conn
         cursor = conn.execute(
             """INSERT INTO backtest_results
-               (symbol, freq, strategy, total_return_pct, final_value,
+               (symbol, freq, strategy, strategy_params, total_return_pct, final_value,
                 trade_count, win_count, loss_count, win_rate, pl_ratio,
                 avg_positive_return, avg_negative_return, trades_json,
                 kline_json, returns_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                symbol, freq, strategy,
+                symbol, freq, strategy, json.dumps(strategy_params or {}, ensure_ascii=False),
                 round(total_return_pct, 2), round(final_value, 2),
                 trade_count, win_count, loss_count,
                 round(win_rate, 2), round(pl_ratio, 4),

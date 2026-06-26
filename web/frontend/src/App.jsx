@@ -27,6 +27,10 @@ export default function App() {
   const [quotes, setQuotes] = useState({})
   const [updatingDb, setUpdatingDb] = useState(false)
   const [updateResult, setUpdateResult] = useState(null)
+  // Strategy params modal state
+  const [paramsSchema, setParamsSchema] = useState({})
+  const [paramsModal, setParamsModal] = useState(null) // { symbol, strategy }
+  const [editingParams, setEditingParams] = useState({})
   const resolveTimer = useRef(null)
   const abortRef = useRef(null)
   const reqSeq = useRef(0) // sequence counter to discard stale responses
@@ -56,6 +60,7 @@ export default function App() {
   // Load strategies
   useEffect(() => {
     axios.get(`${API}/strategies`).then(r => setStrategies(r.data)).catch(() => {})
+    axios.get(`${API}/strategy-params-schema`).then(r => setParamsSchema(r.data)).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -77,6 +82,45 @@ export default function App() {
       ))
       // useEffect with currentStrategy dependency will trigger cache-load automatically
     } catch {}
+  }
+
+  // Open strategy params editor
+  const openParamsModal = (symbol, strategy) => {
+    const item = watchlist.find(w => w.symbol === symbol)
+    const schema = paramsSchema[strategy] || []
+    // Build initial values: merge defaults with saved custom params
+    const defaults = {}
+    for (const p of schema) defaults[p.name] = p.default
+    const savedParams = item?.strategy_params || {}
+    setEditingParams({ ...defaults, ...savedParams })
+    setParamsModal({ symbol, strategy })
+  }
+
+  // Save strategy params
+  const saveParams = async () => {
+    if (!paramsModal) return
+    try {
+      await axios.patch(`${API}/watchlist/${paramsModal.symbol}`, {
+        strategy: paramsModal.strategy,
+        strategy_params: editingParams,
+      })
+      setWatchlist(prev => prev.map(w =>
+        w.symbol === paramsModal.symbol ? { ...w, strategy_params: { ...editingParams } } : w
+      ))
+      // Clear cache so it re-runs with new params
+      await axios.delete(`${API}/backtest-cached/${paramsModal.symbol}`)
+    } catch {}
+    setParamsModal(null)
+    setEditingParams({})
+  }
+
+  // Reset params to defaults
+  const resetParams = () => {
+    if (!paramsModal) return
+    const schema = paramsSchema[paramsModal.strategy] || []
+    const defaults = {}
+    for (const p of schema) defaults[p.name] = p.default
+    setEditingParams(defaults)
   }
 
   // Run backtest
@@ -144,11 +188,17 @@ export default function App() {
     // Abort if already loading or running (avoids duplicate calls from rapid switching)
     if (loading || running) return
     const strategy = getSelectedStrategy()
+    const item = watchlist.find(w => w.symbol === selectedSymbol)
+    const savedParams = item?.strategy_params || {}
     setLoading(true)
     try {
-      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`, {
-        params: { freq, strategy },
-      })
+      const params = {}
+      params.freq = freq
+      params.strategy = strategy
+      if (Object.keys(savedParams).length > 0) {
+        params.strategy_params = JSON.stringify(savedParams)
+      }
+      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`, { params })
       if (res.data) {
         // Has cached result — populate UI directly
         const cached = res.data
@@ -349,6 +399,11 @@ export default function App() {
                     ))}
                   </select>
                   <button
+                    className="watchlist-gear"
+                    title="策略参数"
+                    onClick={(e) => { e.stopPropagation(); openParamsModal(item.symbol, itemStrategy) }}
+                  >⚙</button>
+                  <button
                     className="watchlist-remove"
                     onClick={(e) => { e.stopPropagation(); removeSymbol(item.symbol) }}
                   >×</button>
@@ -394,6 +449,49 @@ export default function App() {
                 ))}
               </div>
               <button className="modal-cancel" onClick={() => setAmbiguousModal(null)}>取消</button>
+            </div>
+          </div>
+        )}
+
+        {/* Strategy params modal */}
+        {paramsModal && (
+          <div className="params-modal-overlay" onClick={() => { setParamsModal(null); setEditingParams({}) }}>
+            <div className="params-modal" onClick={e => e.stopPropagation()}>
+              <h3>策略参数</h3>
+              <p className="params-subtitle">
+                {paramsModal.symbol} — {paramsModal.strategy}
+              </p>
+              {(paramsSchema[paramsModal.strategy] || []).map(p => (
+                <div key={p.name} className="param-row">
+                  <span className="param-label">{p.label}</span>
+                  {p.type === 'bool' ? (
+                    <input
+                      type="checkbox"
+                      className="param-checkbox"
+                      checked={!!editingParams[p.name]}
+                      onChange={e => setEditingParams(prev => ({ ...prev, [p.name]: e.target.checked }))}
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      step={p.type === 'float' ? 'any' : '1'}
+                      className="param-input"
+                      min={p.min}
+                      max={p.max}
+                      value={editingParams[p.name] ?? p.default}
+                      onChange={e => setEditingParams(prev => ({
+                        ...prev,
+                        [p.name]: p.type === 'float' ? parseFloat(e.target.value) : parseInt(e.target.value) || 0,
+                      }))}
+                    />
+                  )}
+                </div>
+              ))}
+              <div className="params-actions">
+                <button className="params-reset-btn" onClick={resetParams}>恢复默认</button>
+                <button className="params-cancel-btn" onClick={() => { setParamsModal(null); setEditingParams({}) }}>取消</button>
+                <button className="params-save-btn" onClick={saveParams}>保存</button>
+              </div>
             </div>
           </div>
         )}

@@ -44,6 +44,50 @@ STRATEGY_MAP: dict[str, Any] = {
 # Supported frequencies
 SUPPORTED_FREQS = ["daily", "weekly", "monthly", "30min", "15min", "60min", "5min", "1min"]
 
+# Strategy parameter schema — used for default values and frontend form generation
+STRATEGY_PARAMS_SCHEMA: dict[str, list[dict[str, Any]]] = {
+    "macross": [
+        {"name": "short", "label": "短期均线", "type": "int", "default": 5, "min": 1, "max": 100},
+        {"name": "long", "label": "长期均线", "type": "int", "default": 20, "min": 1, "max": 200},
+    ],
+    "macd": [
+        {"name": "fast", "label": "快线周期", "type": "int", "default": 12, "min": 1, "max": 100},
+        {"name": "slow", "label": "慢线周期", "type": "int", "default": 26, "min": 1, "max": 200},
+        {"name": "signal", "label": "信号周期", "type": "int", "default": 9, "min": 1, "max": 50},
+        {"name": "rsi_period", "label": "RSI周期(0=关闭)", "type": "int", "default": 0, "min": 0, "max": 100},
+    ],
+    "bollinger": [
+        {"name": "period", "label": "周期", "type": "int", "default": 20, "min": 5, "max": 100},
+        {"name": "devfactor", "label": "标准差倍数", "type": "float", "default": 2.0, "min": 0.5, "max": 5.0},
+    ],
+    "turtle": [
+        {"name": "entry_period", "label": "入场突破周期", "type": "int", "default": 20, "min": 5, "max": 100},
+        {"name": "exit_period", "label": "出场跌破周期", "type": "int", "default": 10, "min": 3, "max": 50},
+    ],
+    "alpha": [
+        {"name": "momentum_period", "label": "动量周期", "type": "int", "default": 10, "min": 3, "max": 60},
+        {"name": "trend_period", "label": "趋势均线周期", "type": "int", "default": 20, "min": 5, "max": 100},
+        {"name": "rsi_period", "label": "RSI周期", "type": "int", "default": 14, "min": 3, "max": 60},
+        {"name": "buy_threshold", "label": "买入阈值", "type": "float", "default": -10, "min": -100, "max": 100},
+        {"name": "sell_threshold", "label": "卖出阈值", "type": "float", "default": 30, "min": -100, "max": 100},
+    ],
+    "reversal": [
+        {"name": "macd_fast", "label": "MACD快线", "type": "int", "default": 12, "min": 1, "max": 100},
+        {"name": "macd_slow", "label": "MACD慢线", "type": "int", "default": 26, "min": 1, "max": 200},
+        {"name": "macd_signal", "label": "MACD信号", "type": "int", "default": 9, "min": 1, "max": 50},
+        {"name": "rsi_period", "label": "RSI周期", "type": "int", "default": 14, "min": 3, "max": 60},
+        {"name": "divergence_lookback", "label": "背离回看窗口", "type": "int", "default": 5, "min": 2, "max": 20},
+        {"name": "rsi_oversold", "label": "RSI超卖线", "type": "float", "default": 30, "min": 0, "max": 100},
+        {"name": "rsi_overbought", "label": "RSI超买线", "type": "float", "default": 70, "min": 0, "max": 100},
+    ],
+    "breakout": [
+        {"name": "lookback", "label": "回看周期", "type": "int", "default": 20, "min": 5, "max": 100},
+        {"name": "breakout_threshold", "label": "突破阈值(%)", "type": "float", "default": 0.01, "min": 0.001, "max": 0.1},
+        {"name": "use_volume_filter", "label": "成交量过滤", "type": "bool", "default": True},
+        {"name": "volume_factor", "label": "成交量倍数", "type": "float", "default": 1.2, "min": 0.5, "max": 5.0},
+    ],
+}
+
 
 # --- Pydantic models ---
 
@@ -56,6 +100,7 @@ class WatchlistItem(BaseModel):
 
 class StrategyUpdate(BaseModel):
     strategy: str
+    strategy_params: Optional[dict[str, Any]] = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -263,13 +308,19 @@ def add_watchlist(item: WatchlistItem):
 
 @app.patch("/api/watchlist/{symbol}")
 def update_watchlist_strategy(symbol: str, body: StrategyUpdate):
-    """Update strategy for a watchlist item."""
+    """Update strategy and/or custom params for a watchlist item."""
     db = _get_db()
     try:
-        db.update_strategy(symbol, body.strategy)
+        db.update_strategy(symbol, body.strategy, body.strategy_params)
     finally:
         db.close()
     return {"status": "ok", "symbol": symbol, "strategy": body.strategy}
+
+
+@app.get("/api/strategy-params-schema")
+def get_strategy_params_schema():
+    """Return parameter schema for all strategies (used by frontend form generation)."""
+    return STRATEGY_PARAMS_SCHEMA
 
 
 @app.delete("/api/watchlist/{symbol}")
@@ -443,19 +494,31 @@ def run_analyze(
     cash: float = Query(100_000.0, description="Initial cash"),
 ):
     """Run backtest and return kline data, equity curve, and trade signals."""
-    # Default strategy from watchlist DB, fallback to 'macross'
-    if not strategy:
-        db = _get_db()
-        try:
-            row = db._active_conn.execute(
-                "SELECT strategy FROM watchlist WHERE symbol = ?", (symbol,)
-            ).fetchone()
-            strategy = row["strategy"] if row and row["strategy"] else "macross"
-        finally:
-            db.close()
+    # Load strategy and custom params from watchlist DB
+    db = _get_db()
+    try:
+        row = db._active_conn.execute(
+            "SELECT strategy, strategy_params FROM watchlist WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        if row and row["strategy"]:
+            db_strategy = row["strategy"]
+            params_json = dict(row)["strategy_params"]
+            try:
+                custom_params = json.loads(params_json) if params_json else {}
+            except (json.JSONDecodeError, TypeError):
+                custom_params = {}
+        else:
+            db_strategy = "macross"
+            custom_params = {}
+    finally:
+        db.close()
 
-    if strategy not in STRATEGY_MAP:
-        raise HTTPException(400, f"Unknown strategy: {strategy}. Choose from {list(STRATEGY_MAP.keys())}")
+    # Query param overrides DB default
+    if strategy:
+        db_strategy = strategy
+
+    if db_strategy not in STRATEGY_MAP:
+        raise HTTPException(400, f"Unknown strategy: {db_strategy}. Choose from {list(STRATEGY_MAP.keys())}")
 
     if freq not in SUPPORTED_FREQS:
         raise HTTPException(400, f"Unsupported frequency: {freq}. Choose from {SUPPORTED_FREQS}")
@@ -508,10 +571,10 @@ def run_analyze(
     if df.empty:
         raise HTTPException(502, f"No valid data for {symbol} after filtering zero prices.")
 
-    # Run backtest
+    # Run backtest with custom params
     try:
         engine = BacktestEngine(df, cash=cash)
-        engine.run(STRATEGY_MAP[strategy])
+        engine.run(STRATEGY_MAP[db_strategy], **custom_params)
     except Exception as e:
         raise HTTPException(500, f"Backtest failed: {e}")
 
@@ -633,7 +696,7 @@ def run_analyze(
         db = _get_db()
         try:
             db.save_backtest_result(
-                symbol=symbol, freq=freq, strategy=strategy,
+                symbol=symbol, freq=freq, strategy=db_strategy,
                 total_return_pct=round(total_return, 2), final_value=final_value,
                 trade_count=len(completed_trades),
                 win_count=len(wins), loss_count=len(losses),
@@ -642,6 +705,7 @@ def run_analyze(
                 trades=completed_trades,
                 kline=kline_rows,
                 returns_curve=returns_curve,
+                strategy_params=custom_params,
             )
         finally:
             db.close()
@@ -651,7 +715,7 @@ def run_analyze(
     return {
         "symbol": symbol,
         "freq": freq,
-        "strategy": strategy,
+        "strategy": db_strategy,
         "bars": len(kline_rows),
         "kline": kline_rows,
         "returns_curve": returns_curve,
@@ -672,10 +736,11 @@ def get_cached_backtest(
     symbol: str,
     freq: Optional[str] = Query(None),
     strategy: Optional[str] = Query(None),
+    strategy_params: Optional[str] = Query(None),  # JSON string of params
 ):
     """Get the most recent saved backtest result for a symbol, or null.
-    
-    Optionally filter by freq and strategy to avoid returning stale cache.
+
+    Optionally filter by freq, strategy, and strategy_params to avoid returning stale cache.
     """
     db = _get_db()
     try:
@@ -688,6 +753,16 @@ def get_cached_backtest(
             return None
         if strategy and row.get("strategy") != strategy:
             return None
+        # Validate strategy_params match if provided
+        if strategy_params:
+            try:
+                row_dict = dict(row)
+                cached_params = json.loads(row_dict.get("strategy_params") or "{}")
+                request_params = json.loads(strategy_params)
+                if cached_params != request_params:
+                    return None
+            except (json.JSONDecodeError, TypeError):
+                return None
         detail = db.get_backtest_result(row["id"])
     finally:
         db.close()
