@@ -138,10 +138,11 @@ export default function App() {
     }
   }, [selectedSymbol, freq])
 
-  // Auto-run when symbol/freq changes (strategy read from DB per-symbol in backend)
+  // Auto-run when symbol/freq/strategy changes
+  const currentStrategy = getSelectedStrategy()
   useEffect(() => {
     runBacktest()
-  }, [runBacktest])
+  }, [runBacktest, currentStrategy])
 
   // Resolve symbol — debounce 500ms
   const resolveCode = useCallback((code) => {

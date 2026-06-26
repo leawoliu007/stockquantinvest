@@ -497,6 +497,12 @@ def run_analyze(
     if df.empty:
         raise HTTPException(502, f"All data sources failed for {symbol}. Last error: {error_msg}")
 
+    # Filter out zero/negative price rows (bad data from baostock)
+    mask = (df["close"] > 0) & (df["open"] > 0) & (df["high"] > 0) & (df["low"] > 0)
+    df = df[mask].copy()
+    if df.empty:
+        raise HTTPException(502, f"No valid data for {symbol} after filtering zero prices.")
+
     # Run backtest
     try:
         engine = BacktestEngine(df, cash=cash)
