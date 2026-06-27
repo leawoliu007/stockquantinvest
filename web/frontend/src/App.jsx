@@ -660,6 +660,87 @@ function createKlineOption(kline, completedTrades) {
   const ohlc = clean.map(d => [d.open, d.close, d.low, d.high])
   const volumes = clean.map(d => d.volume)
 
+  // 34-day Simple Moving Average
+  const sma34 = clean.map((_, i) => {
+    if (i < 33) return null
+    let sum = 0
+    for (let j = i - 33; j <= i; j++) sum += clean[j].close
+    return +(sum / 34).toFixed(2)
+  })
+
+  // Chip cost curves (COST function similar to TongDaXin):
+  // For each day, maintain a chip distribution pool and find the price at which
+  // N% of chips are profitable (i.e., current price > chip cost price).
+  const chipCostCurves = (() => {
+    // Price bins: use a fine-grained grid around the price range
+    const prices = clean.map(d => d.close)
+    const minP = Math.min(...prices) * 0.95
+    const maxP = Math.max(...prices) * 1.05
+    const binWidth = (maxP - minP) / 200  // 200 price bins
+    const numBins = 200
+
+    // Decay factor per day (half-life ~ 60 days, simulating chip turnover)
+    const decay = Math.pow(0.5, 1 / 60)
+
+    // Initialize chip distribution array (price bins)
+    let chips = new Array(numBins).fill(0)
+
+    function priceToBin(p) {
+      return Math.min(numBins - 1, Math.max(0, Math.floor((p - minP) / binWidth)))
+    }
+
+    const cost20 = new Array(clean.length).fill(null)
+    const cost50 = new Array(clean.length).fill(null)
+    const cost80 = new Array(clean.length).fill(null)
+
+    for (let i = 0; i < clean.length; i++) {
+      const d = clean[i]
+      const vol = d.volume || 0
+
+      // Decay existing chips
+      for (let b = 0; b < numBins; b++) {
+        chips[b] *= decay
+      }
+
+      // Add new chips at today's close price (Gaussian spread ±1.5%)
+      const centerBin = priceToBin(d.close)
+      const spread = Math.max(2, Math.floor(0.015 * (maxP - minP) / binWidth))
+      for (let offset = -spread; offset <= spread; offset++) {
+        const bin = centerBin + offset
+        if (bin >= 0 && bin < numBins) {
+          const weight = Math.exp(-(offset * offset) / (2 * spread * 0.3))
+          chips[bin] += vol * weight
+        }
+      }
+
+      // Calculate cumulative distribution from low to high price
+      let totalChips = chips.reduce((s, v) => s + v, 0)
+      if (totalChips === 0) {
+        continue
+      }
+
+      let cumChips = 0
+      for (let b = 0; b < numBins; b++) {
+        cumChips += chips[b]
+        const cumPct = cumChips / totalChips * 100
+        const binPrice = minP + (b + 0.5) * binWidth
+
+        if (cumPct >= 20 && cost20[i] === null) cost20[i] = +(binPrice).toFixed(2)
+        if (cumPct >= 50 && cost50[i] === null) cost50[i] = +(binPrice).toFixed(2)
+        if (cumPct >= 80 && cost80[i] === null) cost80[i] = +(binPrice).toFixed(2)
+      }
+
+      // Forward-fill: use previous day's value if not computed
+      if (i > 0) {
+        if (cost20[i] === null) cost20[i] = cost20[i - 1]
+        if (cost50[i] === null) cost50[i] = cost50[i - 1]
+        if (cost80[i] === null) cost80[i] = cost80[i - 1]
+      }
+    }
+
+    return { cost20, cost50, cost80 }
+  })()
+
   // Build markArea: each trade is [start, end] pair with color
   // Profit trade: red rgba(239,83,80,0.15); Loss trade: green rgba(38,166,154,0.15)
   const markAreaData = completedTrades.map(t => {
@@ -680,7 +761,7 @@ function createKlineOption(kline, completedTrades) {
       borderColor: 'rgba(255,255,255,0.1)',
       textStyle: { color: '#f3f4f6', fontSize: 12 },
     },
-    legend: { data: ['K线', '成交量'], textStyle: { color: '#9ca3af' }, top: 0 },
+    legend: { data: ['K线', 'MA34', '筹码20%', '筹码50%', '筹码80%', '成交量'], textStyle: { color: '#9ca3af' }, top: 0 },
     grid: [
       { left: 60, right: 20, top: 30, height: '50%' },
       { left: 60, right: 20, top: '68%', height: '18%' },
@@ -727,6 +808,38 @@ function createKlineOption(kline, completedTrades) {
           itemStyle: { borderWidth: 0 },
           data: markAreaData,
         },
+      },
+      {
+        name: 'MA34',
+        type: 'line',
+        data: sma34,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5, color: '#a78bfa' },
+      },
+      {
+        name: '筹码20%',
+        type: 'line',
+        data: chipCostCurves.cost20,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5, color: 'rgba(16,185,129,0.8)' },
+      },
+      {
+        name: '筹码50%',
+        type: 'line',
+        data: chipCostCurves.cost50,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5, color: 'rgba(245,158,11,0.8)' },
+      },
+      {
+        name: '筹码80%',
+        type: 'line',
+        data: chipCostCurves.cost80,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1.5, color: 'rgba(239,68,68,0.8)' },
       },
       {
         name: '成交量',
