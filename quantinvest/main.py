@@ -18,7 +18,7 @@ def main() -> None:
     # backtest subcommand
     bp = subparsers.add_parser("backtest", help="Run a backtest")
     bp.add_argument("--symbol", required=True, help="Stock symbol (e.g. 600519.SH)")
-    bp.add_argument("--strategy", default="macross", choices=["macross", "macd", "bollinger", "turtle", "alpha", "reversal", "breakout"])
+    bp.add_argument("--strategy", default="macross", choices=["macross", "macd", "bollinger", "turtle", "alpha", "reversal", "breakout", "costcross"])
     bp.add_argument("--start", default="2020-01-01")
     bp.add_argument("--end", default=None)
     bp.add_argument("--cash", type=float, default=100_000.0)
@@ -58,6 +58,7 @@ def _run_backtest(args) -> None:
     from quantinvest.strategy import (
         MACrossStrategy, MACDStrategy, BollingerStrategy,
         TurtleStrategy, AlphaStrategy, ReversalStrategy, BreakoutStrategy,
+        CostCrossStrategy,
     )
     from quantinvest.backtest import BacktestEngine
 
@@ -69,6 +70,7 @@ def _run_backtest(args) -> None:
         "alpha": AlphaStrategy,
         "reversal": ReversalStrategy,
         "breakout": BreakoutStrategy,
+        "costcross": CostCrossStrategy,
     }
 
     data = QuantData.get(args.symbol)

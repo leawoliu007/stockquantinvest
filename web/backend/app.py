@@ -28,6 +28,7 @@ from quantinvest.backtest import BacktestEngine
 from quantinvest.strategy import (
     MACrossStrategy, MACDStrategy, BollingerStrategy,
     TurtleStrategy, AlphaStrategy, ReversalStrategy, BreakoutStrategy,
+    CostCrossStrategy,
 )
 
 app = FastAPI(title="QuantInvest Web", version="0.1.0")
@@ -50,6 +51,7 @@ STRATEGY_MAP: dict[str, Any] = {
     "alpha": AlphaStrategy,
     "reversal": ReversalStrategy,
     "breakout": BreakoutStrategy,
+    "costcross": CostCrossStrategy,
 }
 
 # Supported frequencies
@@ -96,6 +98,11 @@ STRATEGY_PARAMS_SCHEMA: dict[str, list[dict[str, Any]]] = {
         {"name": "breakout_threshold", "label": "突破阈值(%)", "type": "float", "default": 0.01, "min": 0.001, "max": 0.1},
         {"name": "use_volume_filter", "label": "成交量过滤", "type": "bool", "default": True},
         {"name": "volume_factor", "label": "成交量倍数", "type": "float", "default": 1.2, "min": 0.5, "max": 5.0},
+    ],
+    "costcross": [
+        {"name": "ma_period", "label": "均线周期", "type": "int", "default": 5, "min": 2, "max": 50},
+        {"name": "decay_half_life", "label": "筹码半衰期(天)", "type": "int", "default": 60, "min": 10, "max": 200},
+        {"name": "spread_pct", "label": "筹码扩散比例", "type": "float", "default": 0.015, "min": 0.005, "max": 0.05},
     ],
 }
 
