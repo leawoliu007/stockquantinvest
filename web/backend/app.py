@@ -778,16 +778,8 @@ def get_cached_backtest(
             return None
         if strategy and row.get("strategy") != strategy:
             return None
-        # Validate strategy_params match if provided
-        if strategy_params:
-            try:
-                row_dict = dict(row)
-                cached_params = json.loads(row_dict.get("strategy_params") or "{}")
-                request_params = json.loads(strategy_params)
-                if cached_params != request_params:
-                    return None
-            except (json.JSONDecodeError, TypeError):
-                return None
+        # Note: strategy_params validation removed — cache keyed by symbol:strategy:freq is sufficient.
+        # If params changed, user should click "Run Backtest" to recalculate.
         detail = db.get_backtest_result(row["id"])
     finally:
         db.close()

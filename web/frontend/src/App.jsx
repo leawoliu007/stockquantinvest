@@ -197,9 +197,6 @@ export default function App() {
       const params = {}
       params.freq = freq
       params.strategy = strategy
-      if (Object.keys(savedParams).length > 0) {
-        params.strategy_params = JSON.stringify(savedParams)
-      }
       const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`, { params })
       if (res.data) {
         // Has cached result — populate UI directly
