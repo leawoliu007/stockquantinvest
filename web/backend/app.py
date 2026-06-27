@@ -995,6 +995,73 @@ def batch_backtest(body: dict):
     return {"results": results}
 
 
+# --- Strategy Signals API ---
+
+@app.post("/api/signals")
+def get_strategy_signals(body: dict):
+    """Run all strategies on given symbols and return current position signals.
+
+    Body: { "symbols": ["600519.SH", ...], "freq": "daily" }
+    Returns per-symbol, per-strategy: signal = "LONG" | "FLAT" | "ERROR"
+    """
+    symbols = body.get("symbols", [])
+    freq = body.get("freq", "daily")
+    if not symbols:
+        raise HTTPException(400, "symbols list is required")
+    if freq not in SUPPORTED_FREQS:
+        raise HTTPException(400, f"Unsupported frequency: {freq}")
+
+    end_date = date.today().strftime("%Y-%m-%d")
+    start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    from quantinvest.data import AkShareData, BaoStockData, YFinanceData
+    _SOURCE_CLS = {"akshare": AkShareData, "baostock": BaoStockData, "yfinance": YFinanceData}
+
+    results = []
+    for symbol in symbols:
+        df = pd.DataFrame()
+        if symbol.endswith((".SH", ".SZ")):
+            source_order = ["baostock", "akshare"]
+        elif symbol.endswith((".HK", ".US")):
+            source_order = ["yfinance", "akshare"]
+        else:
+            source_order = ["baostock", "akshare", "yfinance"]
+
+        for src_name in source_order:
+            src_cls = _SOURCE_CLS.get(src_name)
+            if not src_cls:
+                continue
+            try:
+                provider = src_cls()
+                df = provider.fetch(symbol, start=start_date, end=end_date, freq=freq)
+                if not df.empty:
+                    break
+            except Exception:
+                continue
+
+        if df.empty:
+            results.append({"symbol": symbol, "error": "No data", "signals": []})
+            continue
+
+        mask = (df["close"] > 0) & (df["open"] > 0) & (df["high"] > 0) & (df["low"] > 0)
+        df = df[mask].copy()
+
+        signals = []
+        for strat_name in STRATEGY_MAP:
+            try:
+                engine = BacktestEngine(df, cash=100_000.0)
+                engine.run(STRATEGY_MAP[strat_name])
+                pos = engine.cerebro.broker.getposition(engine.cerebro.datas[0])
+                signal = "LONG" if pos.size > 0 else "FLAT"
+                signals.append({"strategy": strat_name, "signal": signal})
+            except Exception as e:
+                signals.append({"strategy": strat_name, "signal": "ERROR", "error": str(e)})
+
+        results.append({"symbol": symbol, "signals": signals})
+
+    return {"results": results}
+
+
 # --- Strategy Optimizer API ---
 
 @app.post("/api/optimize")

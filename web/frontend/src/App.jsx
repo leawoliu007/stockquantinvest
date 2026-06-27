@@ -713,6 +713,9 @@ export default function App() {
 /* ===== Batch Report View ===== */
 
 function BatchReportView({ watchlist, freq, setFreq, reportData, setReportData, reportRunning, setReportRunning }) {
+  const [signalData, setSignalData] = useState(null)
+  const [signalLoading, setSignalLoading] = useState(false)
+
   const runBatch = async () => {
     if (watchlist.length === 0) return
     setReportRunning(true)
@@ -725,6 +728,21 @@ function BatchReportView({ watchlist, freq, setFreq, reportData, setReportData, 
       console.error('Batch backtest failed:', e)
     } finally {
       setReportRunning(false)
+    }
+  }
+
+  const runSignals = async () => {
+    if (watchlist.length === 0) return
+    setSignalLoading(true)
+    setSignalData(null)
+    try {
+      const symbols = watchlist.map(w => w.symbol)
+      const res = await axios.post(`${API}/signals`, { symbols, freq })
+      setSignalData(res.data)
+    } catch (e) {
+      console.error('Signals fetch failed:', e)
+    } finally {
+      setSignalLoading(false)
     }
   }
 
@@ -741,8 +759,43 @@ function BatchReportView({ watchlist, freq, setFreq, reportData, setReportData, 
           <button className="run-btn" onClick={runBatch} disabled={reportRunning || watchlist.length === 0}>
             {reportRunning ? <><span className="loading-spinner" />回测中...</> : '开始批量回测'}
           </button>
+          <button className="run-btn signal-btn" onClick={runSignals} disabled={signalLoading || watchlist.length === 0}>
+            {signalLoading ? <><span className="loading-spinner" />获取中...</> : '策略信号'}
+          </button>
         </div>
       </div>
+
+      {/* Strategy Signals Section */}
+      {signalData && signalData.results && (
+        <div className="signals-section">
+          <h3>策略信号（最新持仓状态）</h3>
+          <table className="report-table signal-table">
+            <thead>
+              <tr>
+                <th rowSpan={2}>股票代码</th>
+                <th colSpan={8}>策略信号</th>
+              </tr>
+              <tr>
+                {signalData.results[0]?.signals.map(s => (
+                  <th key={s.strategy} className="strat-header">{s.strategy}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {signalData.results.map(r => (
+                <tr key={r.symbol}>
+                  <td className="symbol-cell">{r.symbol}</td>
+                  {r.signals.map(s => (
+                    <td key={s.strategy} className={`signal-cell signal-${s.signal.toLowerCase()}`}>
+                      {s.signal === 'ERROR' ? <span className="error-text">错误</span> : s.signal === 'LONG' ? '🟢 持仓' : '⚪ 空仓'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {reportData && reportData.results && (
         <div className="report-table-wrapper">
