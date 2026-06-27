@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import pandas as pd
@@ -29,6 +31,15 @@ from quantinvest.strategy import (
 )
 
 app = FastAPI(title="QuantInvest Web", version="0.1.0")
+
+# Mount frontend static files
+FRONTEND_DIST = Path(__file__).parents[1] / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    def serve_frontend():
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
 
 # Strategy registry
 STRATEGY_MAP: dict[str, Any] = {
@@ -571,10 +582,15 @@ def run_analyze(
     if df.empty:
         raise HTTPException(502, f"No valid data for {symbol} after filtering zero prices.")
 
-    # Run backtest with custom params
+    # Filter custom_params to only include keys valid for the current strategy
+    schema_for_strategy = STRATEGY_PARAMS_SCHEMA.get(db_strategy, [])
+    valid_param_names = {p["name"] for p in schema_for_strategy}
+    filtered_params = {k: v for k, v in custom_params.items() if k in valid_param_names}
+
+    # Run backtest with filtered params
     try:
         engine = BacktestEngine(df, cash=cash)
-        engine.run(STRATEGY_MAP[db_strategy], **custom_params)
+        engine.run(STRATEGY_MAP[db_strategy], **filtered_params)
     except Exception as e:
         raise HTTPException(500, f"Backtest failed: {e}")
 
