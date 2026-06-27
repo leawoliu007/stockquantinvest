@@ -25,6 +25,7 @@ class BacktestEngine:
         self._equity_tracker: list[tuple] = []
         self._trade_signals: list[tuple] = []
         self._completed_trades: list[tuple] = []
+        self._had_open_position: bool = False  # True if position was open before forced close
 
         self.cerebro = bt.Cerebro()
         self.cerebro.broker.setcash(cash)
@@ -66,6 +67,7 @@ class BacktestEngine:
         # Force close any remaining position at last bar's close price
         pos = self.cerebro.broker.getposition(self.cerebro.datas[0])
         if pos.size > 0:
+            self._had_open_position = True  # Strategy was holding at the end
             last_close = self.dataframe["close"].iloc[-1]
             last_date = self.dataframe.index[-1]
             from datetime import datetime
@@ -127,6 +129,10 @@ class BacktestEngine:
         portvalue = self.cerebro.broker.getvalue()
         total_return = (portvalue - self.cash) / self.cash * 100
         return f"Final Value: {portvalue:,.2f}\nTotal Return: {total_return:.2f}%"
+
+    def get_signal(self) -> str:
+        """Return 'LONG' if strategy was holding at end of backtest (before forced close), else 'FLAT'."""
+        return "LONG" if self._had_open_position else "FLAT"
 
     def plot(self, filename: str | Path | None = None, **kwargs: Any) -> None:
         """Plot the backtest results."""

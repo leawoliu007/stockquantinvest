@@ -768,7 +768,12 @@ function BatchReportView({ watchlist, freq, setFreq, reportData, setReportData, 
       {/* Strategy Signals Section */}
       {signalData && signalData.results && (
         <div className="signals-section">
-          <h3>策略信号（最新持仓状态）</h3>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <h3 style={{margin:0}}>策略信号（最新持仓状态）</h3>
+            <span style={{fontSize:11,color:'var(--text-secondary)'}}>
+              {signalData.results[0]?.cached ? `⏱ 缓存 (${signalData.results[0]?.updated_at})` : '🔄 实时计算'}
+            </span>
+          </div>
           <table className="report-table signal-table">
             <thead>
               <tr>

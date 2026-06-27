@@ -93,6 +93,14 @@ class QuantDB:
                 returns_json TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS signals (
+                symbol  TEXT NOT NULL,
+                freq    TEXT NOT NULL DEFAULT 'daily',
+                signals_json TEXT,
+                updated_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (symbol, freq)
+            );
             """
         )
         conn.commit()
@@ -419,3 +427,28 @@ class QuantDB:
             "DELETE FROM backtest_results WHERE symbol = ?", (symbol,)
         )
         self._active_conn.commit()
+
+    # -- signals --
+
+    def save_signals(self, symbol: str, freq: str, signals: list[dict[str, Any]]) -> None:
+        """Save strategy signals for a symbol+freq combo."""
+        self._active_conn.execute(
+            """INSERT INTO signals (symbol, freq, signals_json, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(symbol, freq) DO UPDATE SET signals_json = excluded.signals_json, updated_at = datetime('now')""",
+            (symbol, freq, json.dumps(signals, ensure_ascii=False)),
+        )
+        self._active_conn.commit()
+
+    def get_signals(self, symbol: str, freq: str = "daily") -> dict[str, Any] | None:
+        """Get cached signals for a symbol+freq combo. Returns dict with 'signals' and 'updated_at', or None."""
+        row = self._active_conn.execute(
+            "SELECT signals_json, updated_at FROM signals WHERE symbol = ? AND freq = ?",
+            (symbol, freq),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "signals": json.loads(row["signals_json"]) if row["signals_json"] else [],
+            "updated_at": row["updated_at"],
+        }

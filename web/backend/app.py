@@ -1003,6 +1003,7 @@ def get_strategy_signals(body: dict):
 
     Body: { "symbols": ["600519.SH", ...], "freq": "daily" }
     Returns per-symbol, per-strategy: signal = "LONG" | "FLAT" | "ERROR"
+    Results are cached in the database to avoid repeated backtests.
     """
     symbols = body.get("symbols", [])
     freq = body.get("freq", "daily")
@@ -1017,8 +1018,28 @@ def get_strategy_signals(body: dict):
     from quantinvest.data import AkShareData, BaoStockData, YFinanceData
     _SOURCE_CLS = {"akshare": AkShareData, "baostock": BaoStockData, "yfinance": YFinanceData}
 
+    db = _get_db()
     results = []
     for symbol in symbols:
+        # Try to load cached signals first
+        cached = None
+        try:
+            cached = db.get_signals(symbol, freq)
+        except Exception:
+            pass
+
+        if cached and cached.get("signals"):
+            # Check if cache is from today
+            if cached.get("updated_at", "")[:10] == end_date:
+                results.append({
+                    "symbol": symbol,
+                    "signals": cached["signals"],
+                    "cached": True,
+                    "updated_at": cached.get("updated_at", ""),
+                })
+                continue
+
+        # Need to compute signals
         df = pd.DataFrame()
         if symbol.endswith((".SH", ".SZ")):
             source_order = ["baostock", "akshare"]
@@ -1051,14 +1072,20 @@ def get_strategy_signals(body: dict):
             try:
                 engine = BacktestEngine(df, cash=100_000.0)
                 engine.run(STRATEGY_MAP[strat_name])
-                pos = engine.cerebro.broker.getposition(engine.cerebro.datas[0])
-                signal = "LONG" if pos.size > 0 else "FLAT"
+                signal = engine.get_signal()
                 signals.append({"strategy": strat_name, "signal": signal})
             except Exception as e:
                 signals.append({"strategy": strat_name, "signal": "ERROR", "error": str(e)})
 
-        results.append({"symbol": symbol, "signals": signals})
+        # Cache results in database
+        try:
+            db.save_signals(symbol, freq, signals)
+        except Exception:
+            pass
 
+        results.append({"symbol": symbol, "signals": signals, "cached": False, "updated_at": end_date})
+
+    db.close()
     return {"results": results}
 
 
