@@ -59,6 +59,31 @@ class BacktestEngine:
         pos = self.cerebro.broker.getposition(self.cerebro.datas[0])
         if pos.size > 0:
             last_close = self.dataframe["close"].iloc[-1]
+            last_date = self.dataframe.index[-1]
+            from datetime import datetime
+            if hasattr(last_date, "strftime"):
+                dt_str = last_date.strftime("%Y-%m-%d")
+            else:
+                dt_str = str(last_date)
+            dt_obj = datetime.strptime(dt_str, "%Y-%m-%d")
+
+            # Record SELL signal for the forced close
+            self._trade_signals.append((dt_obj, "SELL", last_close))
+
+            # Calculate PnL for the forced close trade
+            # Find the matching buy signal (last unmatched BUY)
+            buy_sig = None
+            for sig in reversed(self._trade_signals[:-1]):  # exclude the SELL we just added
+                if sig[1] == "BUY":
+                    buy_sig = sig
+                    break
+
+            if buy_sig is not None:
+                pnl = (last_close - buy_sig[2]) * pos.size
+                self._completed_trades.append(
+                    (buy_sig[0], dt_obj, buy_sig[2], last_close, pnl, pnl > 0)
+                )
+
             self.cerebro.broker.cash += pos.size * last_close
             pos.size = 0
             pos.price = 0.0
