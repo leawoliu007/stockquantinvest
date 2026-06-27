@@ -5,6 +5,7 @@ import axios from 'axios'
 const API = '/api'
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('backtest') // 'backtest' | 'report' | 'optimizer'
   const [watchlist, setWatchlist] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [freq, setFreq] = useState('daily')
@@ -31,6 +32,15 @@ export default function App() {
   const [paramsSchema, setParamsSchema] = useState({})
   const [paramsModal, setParamsModal] = useState(null) // { symbol, strategy }
   const [editingParams, setEditingParams] = useState({})
+  // Batch report state
+  const [reportData, setReportData] = useState(null)
+  const [reportRunning, setReportRunning] = useState(false)
+  // Optimizer state
+  const [optStrategy, setOptStrategy] = useState('macross')
+  const [optSymbol, setOptSymbol] = useState('')
+  const [optParamRanges, setOptParamRanges] = useState({})
+  const [optResults, setOptResults] = useState(null)
+  const [optRunning, setOptRunning] = useState(false)
   const resolveTimer = useRef(null)
   const abortRef = useRef(null)
   const reqSeq = useRef(0) // sequence counter to discard stale responses
@@ -535,6 +545,22 @@ export default function App() {
 
       {/* Main content */}
       <main className="main">
+        {/* Tab navigation */}
+        <div className="tab-nav">
+          {['backtest', 'report', 'optimizer'].map(tab => (
+            <button
+              key={tab}
+              className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === 'backtest' ? '单股回测' : tab === 'report' ? '批量报告' : '策略优化'}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab: Backtest */}
+        {activeTab === 'backtest' && (
+          <>
         <header className="main-header">
           <h2>{selectedSymbol || '选择股票'}</h2>
           <button className="run-btn" onClick={runBacktest} disabled={loading || running}>
@@ -644,9 +670,288 @@ export default function App() {
             </div>
           )}
         </div>
+          </>
+        )}
+
+        {/* Tab: Batch Report */}
+        {activeTab === 'report' && (
+          <BatchReportView
+            watchlist={watchlist}
+            freq={freq}
+            setFreq={setFreq}
+            reportData={reportData}
+            setReportData={setReportData}
+            reportRunning={reportRunning}
+            setReportRunning={setReportRunning}
+          />
+        )}
+
+        {/* Tab: Optimizer */}
+        {activeTab === 'optimizer' && (
+          <OptimizerView
+            watchlist={watchlist}
+            strategies={strategies}
+            paramsSchema={paramsSchema}
+            optStrategy={optStrategy}
+            setOptStrategy={setOptStrategy}
+            optSymbol={optSymbol}
+            setOptSymbol={setOptSymbol}
+            optParamRanges={optParamRanges}
+            setOptParamRanges={setOptParamRanges}
+            optResults={optResults}
+            setOptResults={setOptResults}
+            optRunning={optRunning}
+            setOptRunning={setOptRunning}
+          />
+        )}
       </main>
     </div>
   )
+}
+
+
+/* ===== Batch Report View ===== */
+
+function BatchReportView({ watchlist, freq, setFreq, reportData, setReportData, reportRunning, setReportRunning }) {
+  const runBatch = async () => {
+    if (watchlist.length === 0) return
+    setReportRunning(true)
+    setReportData(null)
+    try {
+      const symbols = watchlist.map(w => w.symbol)
+      const res = await axios.post(`${API}/batch-backtest`, { symbols, freq })
+      setReportData(res.data)
+    } catch (e) {
+      console.error('Batch backtest failed:', e)
+    } finally {
+      setReportRunning(false)
+    }
+  }
+
+  return (
+    <div className="report-view">
+      <div className="report-header">
+        <h2>自选股批量回测报告</h2>
+        <div className="report-controls">
+          <div className="freq-group">
+            {['daily', 'weekly', '60min', '30min'].map(f => (
+              <button key={f} className={`freq-btn ${freq === f ? 'active' : ''}`} onClick={() => setFreq(f)}>{f}</button>
+            ))}
+          </div>
+          <button className="run-btn" onClick={runBatch} disabled={reportRunning || watchlist.length === 0}>
+            {reportRunning ? <><span className="loading-spinner" />回测中...</> : '开始批量回测'}
+          </button>
+        </div>
+      </div>
+
+      {reportData && reportData.results && (
+        <div className="report-table-wrapper">
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th rowSpan={2}>股票代码</th>
+                <th colSpan={8}>策略对比</th>
+              </tr>
+              <tr>
+                {reportData.results[0]?.strategies.map(s => (
+                  <th key={s.strategy} className="strat-header">{s.strategy}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {reportData.results.map(r => (
+                <tr key={r.symbol}>
+                  <td className="symbol-cell">{r.symbol}</td>
+                  {r.strategies.map(s => (
+                    <td key={s.strategy} className={s.total_return_pct >= 0 ? 'positive' : 'negative'}>
+                      {s.error ? <span className="error-text">错误</span> : (
+                        <div className="strat-cell">
+                          <div className="return-val">{s.total_return_pct >= 0 ? '+' : ''}{s.total_return_pct}%</div>
+                          <div className="meta-row">
+                            <span>胜率{s.win_rate}%</span>
+                            <span>DD{s.max_drawdown_pct}%</span>
+                          </div>
+                          <div className="meta-row"><span>{s.trade_count}笔</span></div>
+                        </div>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!reportData && !reportRunning && (
+        <div className="placeholder">
+          {watchlist.length === 0 ? '自选股为空，请先添加股票' : '点击"开始批量回测"对所有自选股运行全部策略'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+/* ===== Optimizer View ===== */
+
+function OptimizerView({ watchlist, strategies, paramsSchema, optStrategy, setOptStrategy, optSymbol, setOptSymbol, optParamRanges, setOptParamRanges, optResults, setOptResults, optRunning, setOptRunning }) {
+  // When strategy changes, auto-fill param ranges from schema defaults
+  useEffect(() => {
+    const schema = paramsSchema[optStrategy] || []
+    if (schema.length > 0 && Object.keys(optParamRanges).length === 0) {
+      const ranges = {}
+      for (const p of schema) {
+        if (p.type === 'bool') continue  // skip bool params for optimization
+        const d = p.default
+        if (p.type === 'int') {
+          ranges[p.name] = { min: Math.max(1, Math.floor(d * 0.5)), max: Math.ceil(d * 2), step: 1 }
+        } else {
+          ranges[p.name] = { min: Math.max(0.001, +(d * 0.5).toFixed(4)), max: +(d * 2).toFixed(4), step: +(p.name.includes('pct') || p.name.includes('threshold')) ? 0.01 : 0.1 }
+        }
+      }
+      setOptParamRanges(ranges)
+    }
+    // If switching strategies, clear old ranges
+    if (schema.length > 0 && Object.keys(optParamRanges).length > 0) {
+      const hasMatch = schema.some(p => p.name in optParamRanges)
+      if (!hasMatch) {
+        const ranges = {}
+        for (const p of schema) {
+          if (p.type === 'bool') continue
+          const d = p.default
+          if (p.type === 'int') {
+            ranges[p.name] = { min: Math.max(1, Math.floor(d * 0.5)), max: Math.ceil(d * 2), step: 1 }
+          } else {
+            ranges[p.name] = { min: Math.max(0.001, +(d * 0.5).toFixed(4)), max: +(d * 2).toFixed(4), step: 0.1 }
+          }
+        }
+        setOptParamRanges(ranges)
+      }
+    }
+  }, [optStrategy])
+
+  const runOptimize = async () => {
+    if (!optSymbol || !optStrategy) return
+    setOptRunning(true)
+    setOptResults(null)
+    try {
+      const res = await axios.post(`${API}/optimize`, {
+        symbol: optSymbol,
+        strategy: optStrategy,
+        freq: 'daily',
+        params: optParamRanges,
+      })
+      setOptResults(res.data)
+    } catch (e) {
+      console.error('Optimization failed:', e)
+    } finally {
+      setOptRunning(false)
+    }
+  }
+
+  const schema = paramsSchema[optStrategy] || []
+
+  return (
+    <div className="optimizer-view">
+      <h2>策略参数优化</h2>
+      <div className="opt-config">
+        <div className="opt-row">
+          <label>股票</label>
+          <select value={optSymbol} onChange={e => setOptSymbol(e.target.value)}>
+            <option value="">选择股票</option>
+            {watchlist.map(w => <option key={w.symbol} value={w.symbol}>{w.symbol}{w.name ? ` ${w.name}` : ''}</option>)}
+          </select>
+        </div>
+        <div className="opt-row">
+          <label>策略</label>
+          <select value={optStrategy} onChange={e => setOptStrategy(e.target.value)}>
+            {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <div className="param-ranges">
+          <h3>参数范围</h3>
+          {schema.filter(p => p.type !== 'bool').map(p => (
+            <div key={p.name} className="range-row">
+              <span className="range-label">{p.label}</span>
+              <div className="range-inputs">
+                <input type="number" step={p.type === 'float' ? 'any' : '1'} placeholder="最小"
+                  value={optParamRanges[p.name]?.min ?? ''}
+                  onChange={e => setOptParamRanges(prev => ({ ...prev, [p.name]: { ...prev[p.name], min: parseFloat(e.target.value) || 0 } }))} />
+                <span className="range-sep">—</span>
+                <input type="number" step={p.type === 'float' ? 'any' : '1'} placeholder="最大"
+                  value={optParamRanges[p.name]?.max ?? ''}
+                  onChange={e => setOptParamRanges(prev => ({ ...prev, [p.name]: { ...prev[p.name], max: parseFloat(e.target.value) || 0 } }))} />
+                <span className="range-sep">步长</span>
+                <input type="number" step="any" placeholder="步长"
+                  value={optParamRanges[p.name]?.step ?? ''}
+                  onChange={e => setOptParamRanges(prev => ({ ...prev, [p.name]: { ...prev[p.name], step: parseFloat(e.target.value) || 1 } }))} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button className="run-btn opt-run-btn" onClick={runOptimize} disabled={optRunning || !optSymbol}>
+          {optRunning ? <><span className="loading-spinner" />优化中...</> : '开始优化'}
+        </button>
+      </div>
+
+      {optResults && (
+        <div className="opt-results">
+          <div className="opt-summary">
+            共测试 <strong>{optResults.total_combinations}</strong> 组参数，成功 <strong>{optResults.evaluated}</strong> 组
+          </div>
+
+          <div className="opt-metrics-grid">
+            <div className="opt-metric-card">
+              <h3>🏆 胜率最高 Top3</h3>
+              <table className="opt-table">
+                <thead><tr><th>参数</th><th>收益率</th><th>胜率</th><th>最大回撤</th><th>交易次数</th></tr></thead>
+                <tbody>
+                  {(optResults.best_win_rate || []).map((r, i) => (
+                    <tr key={i}><td>{formatParams(r.params)}</td><td className={r.total_return_pct >= 0 ? 'positive' : 'negative'}>{r.total_return_pct}%</td><td className="positive">{r.win_rate}%</td><td>{r.max_drawdown_pct}%</td><td>{r.trade_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="opt-metric-card">
+              <h3>💰 收益最高 Top3</h3>
+              <table className="opt-table">
+                <thead><tr><th>参数</th><th>收益率</th><th>胜率</th><th>最大回撤</th><th>交易次数</th></tr></thead>
+                <tbody>
+                  {(optResults.best_return || []).map((r, i) => (
+                    <tr key={i}><td>{formatParams(r.params)}</td><td className={r.total_return_pct >= 0 ? 'positive' : 'negative'}>{r.total_return_pct}%</td><td>{r.win_rate}%</td><td>{r.max_drawdown_pct}%</td><td>{r.trade_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="opt-metric-card">
+              <h3>📉 回撤最小 Top3</h3>
+              <table className="opt-table">
+                <thead><tr><th>参数</th><th>收益率</th><th>胜率</th><th>最大回撤</th><th>交易次数</th></tr></thead>
+                <tbody>
+                  {(optResults.best_drawdown || []).map((r, i) => (
+                    <tr key={i}><td>{formatParams(r.params)}</td><td className={r.total_return_pct >= 0 ? 'positive' : 'negative'}>{r.total_return_pct}%</td><td>{r.win_rate}%</td><td className="positive">{r.max_drawdown_pct}%</td><td>{r.trade_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!optResults && !optRunning && (
+        <div className="placeholder">配置参数范围后点击"开始优化"</div>
+      )}
+    </div>
+  )
+}
+
+function formatParams(params) {
+  return Object.entries(params).map(([k, v]) => `${k}=${v}`).join(', ')
 }
 
 

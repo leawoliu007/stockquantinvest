@@ -894,3 +894,249 @@ def update_symbols():
         result["sources"]["import"] = f"error: {e}"
 
     return result
+
+
+# --- Batch Backtest Report API ---
+
+@app.post("/api/batch-backtest")
+def batch_backtest(body: dict):
+    """Run backtest for all strategies on given symbols. Return summary stats.
+
+    Body: { "symbols": ["600519.SH", ...], "freq": "daily" }
+    """
+    symbols = body.get("symbols", [])
+    freq = body.get("freq", "daily")
+    if not symbols:
+        raise HTTPException(400, "symbols list is required")
+    if freq not in SUPPORTED_FREQS:
+        raise HTTPException(400, f"Unsupported frequency: {freq}")
+
+    end_date = date.today().strftime("%Y-%m-%d")
+    start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    from quantinvest.data import AkShareData, BaoStockData, YFinanceData
+    _SOURCE_CLS = {"akshare": AkShareData, "baostock": BaoStockData, "yfinance": YFinanceData}
+
+    results = []
+    for symbol in symbols:
+        # Fetch data
+        df = pd.DataFrame()
+        if symbol.endswith((".SH", ".SZ")):
+            source_order = ["baostock", "akshare"]
+        elif symbol.endswith((".HK", ".US")):
+            source_order = ["yfinance", "akshare"]
+        else:
+            source_order = ["baostock", "akshare", "yfinance"]
+
+        for src_name in source_order:
+            src_cls = _SOURCE_CLS.get(src_name)
+            if not src_cls:
+                continue
+            try:
+                provider = src_cls()
+                df = provider.fetch(symbol, start=start_date, end=end_date, freq=freq)
+                if not df.empty:
+                    break
+            except Exception:
+                continue
+
+        if df.empty:
+            results.append({"symbol": symbol, "error": "No data", "strategies": []})
+            continue
+
+        # Filter bad rows
+        mask = (df["close"] > 0) & (df["open"] > 0) & (df["high"] > 0) & (df["low"] > 0)
+        df = df[mask].copy()
+
+        strat_results = []
+        for strat_name in STRATEGY_MAP:
+            try:
+                engine = BacktestEngine(df, cash=100_000.0)
+                engine.run(STRATEGY_MAP[strat_name])
+                final_value = engine.cerebro.broker.getvalue()
+                total_return = (final_value - 100_000.0) / 100_000.0 * 100
+
+                trades_df = engine.get_completed_trades()
+                trades = []
+                if not trades_df.empty:
+                    for _, trow in trades_df.iterrows():
+                        trades.append({"is_profitable": bool(trow["is_profitable"])})
+
+                wins = [t for t in trades if t["is_profitable"]]
+                win_rate = len(trades) > 0 and len(wins) / len(trades) * 100 or 0
+
+                # Max drawdown from equity curve
+                equity = engine.get_equity_curve()
+                max_dd = 0.0
+                if len(equity) > 0:
+                    peak = equity.iloc[0]
+                    for v in equity:
+                        if v > peak:
+                            peak = v
+                        dd = (peak - v) / peak * 100 if peak > 0 else 0
+                        if dd > max_dd:
+                            max_dd = dd
+
+                strat_results.append({
+                    "strategy": strat_name,
+                    "total_return_pct": round(total_return, 2),
+                    "final_value": round(final_value, 2),
+                    "trade_count": len(trades),
+                    "win_count": len(wins),
+                    "loss_count": len(trades) - len(wins),
+                    "win_rate": round(win_rate, 1),
+                    "max_drawdown_pct": round(max_dd, 2),
+                })
+            except Exception as e:
+                strat_results.append({"strategy": strat_name, "error": str(e)})
+
+        results.append({"symbol": symbol, "strategies": strat_results})
+
+    return {"results": results}
+
+
+# --- Strategy Optimizer API ---
+
+@app.post("/api/optimize")
+def optimize_strategy(body: dict):
+    """Grid-search strategy parameters and return top 3 by win_rate, return, drawdown.
+
+    Body: {
+        "symbol": "600519.SH",
+        "strategy": "macross",
+        "freq": "daily",
+        "params": {
+            "short": {"min": 3, "max": 20, "step": 1},
+            "long": {"min": 10, "max": 60, "step": 5}
+        }
+    }
+    """
+    symbol = body.get("symbol", "")
+    strategy_name = body.get("strategy", "")
+    freq = body.get("freq", "daily")
+    param_ranges = body.get("params", {})
+
+    if not symbol or not strategy_name:
+        raise HTTPException(400, "symbol and strategy are required")
+    if strategy_name not in STRATEGY_MAP:
+        raise HTTPException(400, f"Unknown strategy: {strategy_name}")
+    if freq not in SUPPORTED_FREQS:
+        raise HTTPException(400, f"Unsupported frequency: {freq}")
+    if not param_ranges:
+        raise HTTPException(400, "params ranges are required")
+
+    # Fetch data
+    end_date = date.today().strftime("%Y-%m-%d")
+    start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    from quantinvest.data import AkShareData, BaoStockData, YFinanceData
+    _SOURCE_CLS = {"akshare": AkShareData, "baostock": BaoStockData, "yfinance": YFinanceData}
+
+    df = pd.DataFrame()
+    if symbol.endswith((".SH", ".SZ")):
+        source_order = ["baostock", "akshare"]
+    elif symbol.endswith((".HK", ".US")):
+        source_order = ["yfinance", "akshare"]
+    else:
+        source_order = ["baostock", "akshare", "yfinance"]
+
+    for src_name in source_order:
+        src_cls = _SOURCE_CLS.get(src_name)
+        if not src_cls:
+            continue
+        try:
+            provider = src_cls()
+            df = provider.fetch(symbol, start=start_date, end=end_date, freq=freq)
+            if not df.empty:
+                break
+        except Exception:
+            continue
+
+    if df.empty:
+        raise HTTPException(502, f"No data for {symbol}")
+
+    mask = (df["close"] > 0) & (df["open"] > 0) & (df["high"] > 0) & (df["low"] > 0)
+    df = df[mask].copy()
+
+    # Generate grid
+    param_names = list(param_ranges.keys())
+    grids = []
+    for name in param_names:
+        r = param_ranges[name]
+        lo, hi, step = float(r["min"]), float(r["max"]), float(r["step"])
+        vals = []
+        v = lo
+        while v <= hi + step * 0.01:
+            vals.append(round(v, 6))
+            v += step
+        grids.append(vals)
+
+    import itertools
+    combinations = list(itertools.product(*grids))
+
+    all_results = []
+    for combo in combinations:
+        params = dict(zip(param_names, combo))
+        # Convert param types based on schema
+        schema_for_strategy = STRATEGY_PARAMS_SCHEMA.get(strategy_name, [])
+        for p in schema_for_strategy:
+            if p["type"] == "int" and p["name"] in params:
+                params[p["name"]] = int(params[p["name"]])
+            elif p["type"] == "bool" and p["name"] in params:
+                params[p["name"]] = bool(params[p["name"]])
+
+        try:
+            engine = BacktestEngine(df, cash=100_000.0)
+            engine.run(STRATEGY_MAP[strategy_name], **params)
+            final_value = engine.cerebro.broker.getvalue()
+            total_return = (final_value - 100_000.0) / 100_000.0 * 100
+
+            trades_df = engine.get_completed_trades()
+            trades = []
+            if not trades_df.empty:
+                for _, trow in trades_df.iterrows():
+                    trades.append({"is_profitable": bool(trow["is_profitable"])})
+
+            wins = [t for t in trades if t["is_profitable"]]
+            win_rate = len(trades) > 0 and len(wins) / len(trades) * 100 or 0
+
+            # Max drawdown
+            equity = engine.get_equity_curve()
+            max_dd = 0.0
+            if len(equity) > 0:
+                peak = equity.iloc[0]
+                for v in equity:
+                    if v > peak:
+                        peak = v
+                    dd = (peak - v) / peak * 100 if peak > 0 else 0
+                    if dd > max_dd:
+                        max_dd = dd
+
+            all_results.append({
+                "params": params,
+                "total_return_pct": round(total_return, 2),
+                "final_value": round(final_value, 2),
+                "trade_count": len(trades),
+                "win_rate": round(win_rate, 1),
+                "max_drawdown_pct": round(max_dd, 2),
+            })
+        except Exception:
+            continue
+
+    # Sort and pick top 3 for each metric
+    def top3(key):
+        sorted_results = sorted(all_results, key=lambda x: x[key], reverse=True)
+        return sorted_results[:3]
+
+    # For drawdown, smaller is better
+    def top3_dd():
+        sorted_results = sorted(all_results, key=lambda x: x["max_drawdown_pct"])
+        return sorted_results[:3]
+
+    return {
+        "total_combinations": len(combinations),
+        "evaluated": len(all_results),
+        "best_win_rate": top3("win_rate"),
+        "best_return": top3("total_return_pct"),
+        "best_drawdown": top3_dd(),
+    }
