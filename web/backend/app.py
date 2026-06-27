@@ -101,6 +101,8 @@ STRATEGY_PARAMS_SCHEMA: dict[str, list[dict[str, Any]]] = {
     ],
     "costcross": [
         {"name": "ma_period", "label": "均线周期", "type": "int", "default": 5, "min": 2, "max": 50},
+        {"name": "cost_buy_pct", "label": "买入COST百分位", "type": "float", "default": 80, "min": 10, "max": 95},
+        {"name": "cost_sell_pct", "label": "卖出COST百分位", "type": "float", "default": 80, "min": 10, "max": 95},
         {"name": "decay_half_life", "label": "筹码半衰期(天)", "type": "int", "default": 60, "min": 10, "max": 200},
         {"name": "spread_pct", "label": "筹码扩散比例", "type": "float", "default": 0.015, "min": 0.005, "max": 0.05},
     ],
