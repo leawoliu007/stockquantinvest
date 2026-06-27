@@ -7,7 +7,9 @@ sells when it drops below.
 
 from __future__ import annotations
 
-import backtrader as bt
+from typing import Any
+
+import numpy as np
 
 from quantinvest.strategy.base_strategy import BaseStrategy
 
@@ -15,15 +17,7 @@ from quantinvest.strategy.base_strategy import BaseStrategy
 class AlphaStrategy(BaseStrategy):
     """Multi-factor alpha strategy based on indicator resonance.
 
-    Factors:
-      - Momentum: ROC (Rate of Change) over momentum_period
-      - Trend: price vs SMA(trend_period), positive when above
-      - Mean Reversion: RSI oversold/overbought zones
-      - Volatility: Bollinger Band position (normalized 0-1)
-
-    Composite score = weighted sum, range roughly [-100, 100].
-    Buy when score crosses above buy_threshold.
-    Sell when score crosses below sell_threshold.
+    Uses pre-computed talib ROC/SMA/RSI/BollingerBands arrays.
 
     Params:
         momentum_period (int): ROC lookback (default 10)
@@ -40,71 +34,55 @@ class AlphaStrategy(BaseStrategy):
     """
 
     params = dict(
-        momentum_period=10,
-        trend_period=20,
-        rsi_period=14,
-        bb_period=20,
-        bb_devfactor=2.0,
-        momentum_weight=0.3,
-        trend_weight=0.25,
-        rsi_weight=0.25,
-        bb_weight=0.2,
-        buy_threshold=-10,
-        sell_threshold=30,
+        momentum_period=10, trend_period=20, rsi_period=14,
+        bb_period=20, bb_devfactor=2.0,
+        momentum_weight=0.3, trend_weight=0.25,
+        rsi_weight=0.25, bb_weight=0.2,
+        buy_threshold=-10, sell_threshold=30, _talib={},
     )
 
-    def __init__(self) -> None:
-        super().__init__()
-        # Momentum factor: ROC normalized to [-100, 100] roughly
-        self.roc = bt.indicators.ROC(
-            self.data.close, period=self.p.momentum_period
-        )
+    @classmethod
+    def needs_talib(cls, kwargs: dict) -> dict[str, Any]:
+        return {
+            "sma_periods": [kwargs.get("trend_period", 20)],
+            "rsi_periods": [kwargs.get("rsi_period", 14)],
+            "roc_periods": [kwargs.get("momentum_period", 10)],
+            "bb_period": kwargs.get("bb_period", 20),
+            "bb_devfactor": kwargs.get("bb_devfactor", 2.0),
+        }
 
-        # Trend factor: distance from SMA, normalized by price
-        self.sma = bt.indicators.SimpleMovingAverage(
-            self.data.close, period=self.p.trend_period
-        )
+    def _alpha_score(self, idx: int) -> float:
+        t = self.p._talib
+        close = t["_close"][idx]
+        roc_val = t[f"roc_{self.p.momentum_period}"][idx]
+        mom = roc_val if np.isfinite(roc_val) else 0.0
 
-        # RSI factor: map RSI(0-100) to score(-100 to 100), neutral at 50
-        self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
+        sma_val = t[f"sma_{self.p.trend_period}"][idx]
+        trend = 100 if close > sma_val else -100
 
-        # Bollinger Band position: (close - bot) / (top - bot) -> [0, 1]
-        self.bb = bt.indicators.BollingerBands(
-            self.data.close,
-            period=self.p.bb_period,
-            devfactor=self.p.bb_devfactor,
-        )
+        rsi_val = t[f"rsi_{self.p.rsi_period}"][idx]
+        rsi_score = (50 - rsi_val) * 2 if np.isfinite(rsi_val) else 0.0
 
-    def _alpha_score(self) -> float:
-        """Compute composite alpha score."""
-        # Momentum: ROC value directly (percentage change * 10)
-        mom = self.roc[0] * 10
-
-        # Trend: positive when price above SMA
-        trend = 100 if self.data.close[0] > self.sma[0] else -100
-
-        # RSI: map [0, 100] -> [-100, 100], neutral at 50
-        rsi_score = (50 - self.rsi[0]) * 2
-
-        # BB position: low position (near bottom) is bullish
-        bb_width = self.bb.top[0] - self.bb.bot[0]
-        if bb_width > 0:
-            bb_pos = (self.bb.top[0] - self.data.close[0]) / bb_width
+        bb_top = t["bb_upper"][idx]
+        bb_bot = t["bb_lower"][idx]
+        bb_width = bb_top - bb_bot
+        if np.isfinite(bb_width) and bb_width > 0:
+            bb_pos = (bb_top - close) / bb_width
         else:
             bb_pos = 0.5
         bb_score = bb_pos * 200 - 100
 
-        score = (
+        return (
             self.p.momentum_weight * mom
             + self.p.trend_weight * trend
             + self.p.rsi_weight * rsi_score
             + self.p.bb_weight * bb_score
         )
-        return score
 
     def next(self) -> None:
         super().next()
-        score = self._alpha_score()
+        idx = len(self.data.close) - 1
+        score = self._alpha_score(idx)
 
         if not self.position:
             if score > self.p.buy_threshold:

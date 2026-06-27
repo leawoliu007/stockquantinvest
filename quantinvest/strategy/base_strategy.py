@@ -8,7 +8,7 @@ import backtrader as bt
 class BaseStrategy(bt.Strategy):
     """Base strategy that accepts a pre-loaded DataFrame."""
 
-    params = dict(_equity_tracker=None, _trade_signals=None, _completed_trades=None)
+    params = dict(_equity_tracker=None, _trade_signals=None, _completed_trades=None, _talib={})
 
     def __init__(self) -> None:
         self.data = self.datas[0]

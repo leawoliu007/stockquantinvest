@@ -46,11 +46,19 @@ class BacktestEngine:
 
     def run(self, strategy: Type, **kwargs: Any) -> bt.analyzers.Snapshot:
         """Run the strategy and return analyzers."""
+        # Pre-compute talib indicators if strategy declares needs_talib()
+        talib_indicators: dict[str, Any] = {}
+        if hasattr(strategy, "needs_talib"):
+            talib_params = strategy.needs_talib(kwargs)
+            from quantinvest.strategy.talib_helpers import precompute
+            talib_indicators = precompute(self.dataframe, **talib_params)
+
         self.cerebro.addstrategy(
             strategy,
             _equity_tracker=self._equity_tracker,
             _trade_signals=self._trade_signals,
             _completed_trades=self._completed_trades,
+            _talib=talib_indicators,
             **kwargs,
         )
         results = self.cerebro.run()

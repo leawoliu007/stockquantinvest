@@ -6,7 +6,9 @@ combined with RSI overbought/oversold confirmation.
 
 from __future__ import annotations
 
-import backtrader as bt
+from typing import Any
+
+import numpy as np
 
 from quantinvest.strategy.base_strategy import BaseStrategy
 
@@ -14,10 +16,7 @@ from quantinvest.strategy.base_strategy import BaseStrategy
 class ReversalStrategy(BaseStrategy):
     """Reversal strategy using MACD divergence + RSI extremes.
 
-    Bullish reversal: price makes lower low but MACD histogram makes higher low,
-    confirmed by RSI crossing above oversold threshold.
-    Bearish reversal: price makes higher high but MACD histogram makes lower high,
-    confirmed by RSI crossing below overbought threshold.
+    Uses pre-computed talib MACD/RSI arrays.
 
     Params:
         macd_fast (int): MACD fast EMA period (default 12)
@@ -30,59 +29,76 @@ class ReversalStrategy(BaseStrategy):
     """
 
     params = dict(
-        macd_fast=12,
-        macd_slow=26,
-        macd_signal=9,
-        rsi_period=14,
-        divergence_lookback=5,
-        rsi_oversold=30,
-        rsi_overbought=70,
+        macd_fast=12, macd_slow=26, macd_signal=9,
+        rsi_period=14, divergence_lookback=5,
+        rsi_oversold=30, rsi_overbought=70, _talib={},
     )
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.macd = bt.indicators.MACD(
-            self.data.close,
-            period_me1=self.p.macd_fast,
-            period_me2=self.p.macd_slow,
-            period_signal=self.p.macd_signal,
-        )
-        self.rsi = bt.indicators.RSI(self.data.close, period=self.p.rsi_period)
+    @classmethod
+    def needs_talib(cls, kwargs: dict) -> dict[str, Any]:
+        return {
+            "macd_fast": kwargs.get("macd_fast", 12),
+            "macd_slow": kwargs.get("macd_slow", 26),
+            "macd_signal_period": kwargs.get("macd_signal", 9),
+            "rsi_periods": [kwargs.get("rsi_period", 14)],
+        }
 
-    def _bullish_divergence(self) -> bool:
-        """Check if price made lower low while MACD histogram made higher low."""
+    def _bullish_divergence(self, idx: int) -> bool:
         lb = self.p.divergence_lookback
-        if len(self.data.close) < lb + 1:
+        lb_idx = idx - lb
+        if lb_idx < 0:
             return False
-        # Price lower low: current close < close lb bars ago
-        price_lower = self.data.close[0] < self.data.close[-lb]
-        # MACD histogram = macd - signal; higher low means less negative / more positive
-        hist_0 = self.macd.macd[0] - self.macd.signal[0]
-        hist_lb = self.macd.macd[-lb] - self.macd.signal[-lb]
-        macd_higher = hist_0 > hist_lb
-        # RSI confirmation: RSI just crossed above oversold
-        rsi_confirm = self.rsi[0] > self.p.rsi_oversold and self.rsi[-1] <= self.p.rsi_oversold
-        return price_lower and macd_higher and rsi_confirm
+        t = self.p._talib
+        close_arr = t["_close"]
 
-    def _bearish_divergence(self) -> bool:
-        """Check if price made higher high while MACD histogram made lower high."""
-        lb = self.p.divergence_lookback
-        if len(self.data.close) < lb + 1:
+        # Price lower low
+        price_lower = close_arr[idx] < close_arr[lb_idx]
+
+        # MACD histogram higher low
+        hist_0 = t["macd_hist"][idx]
+        hist_lb = t["macd_hist"][lb_idx]
+        if not np.isfinite(hist_0) or not np.isfinite(hist_lb):
             return False
-        # Price higher high: current close > close lb bars ago
-        price_higher = self.data.close[0] > self.data.close[-lb]
-        # MACD histogram lower high
-        hist_0 = self.macd.macd[0] - self.macd.signal[0]
-        hist_lb = self.macd.macd[-lb] - self.macd.signal[-lb]
-        macd_lower = hist_0 < hist_lb
-        # RSI confirmation: RSI just crossed below overbought
-        rsi_confirm = self.rsi[0] < self.p.rsi_overbought and self.rsi[-1] >= self.p.rsi_overbought
-        return price_higher and macd_lower and rsi_confirm
+
+        # RSI confirmation
+        rsi_arr = t[f"rsi_{self.p.rsi_period}"]
+        rsi_0 = rsi_arr[idx]
+        rsi_prev = rsi_arr[idx - 1]
+        if not np.isfinite(rsi_0) or not np.isfinite(rsi_prev):
+            return False
+        rsi_confirm = rsi_0 > self.p.rsi_oversold and rsi_prev <= self.p.rsi_oversold
+
+        return price_lower and hist_0 > hist_lb and rsi_confirm
+
+    def _bearish_divergence(self, idx: int) -> bool:
+        lb = self.p.divergence_lookback
+        lb_idx = idx - lb
+        if lb_idx < 0:
+            return False
+        t = self.p._talib
+        close_arr = t["_close"]
+
+        price_higher = close_arr[idx] > close_arr[lb_idx]
+
+        hist_0 = t["macd_hist"][idx]
+        hist_lb = t["macd_hist"][lb_idx]
+        if not np.isfinite(hist_0) or not np.isfinite(hist_lb):
+            return False
+
+        rsi_arr = t[f"rsi_{self.p.rsi_period}"]
+        rsi_0 = rsi_arr[idx]
+        rsi_prev = rsi_arr[idx - 1]
+        if not np.isfinite(rsi_0) or not np.isfinite(rsi_prev):
+            return False
+        rsi_confirm = rsi_0 < self.p.rsi_overbought and rsi_prev >= self.p.rsi_overbought
+
+        return price_higher and hist_0 < hist_lb and rsi_confirm
 
     def next(self) -> None:
         super().next()
+        idx = len(self.data.close) - 1
         if not self.position:
-            if self._bullish_divergence():
+            if self._bullish_divergence(idx):
                 self.buy()
-        elif self._bearish_divergence():
+        elif self._bearish_divergence(idx):
             self.close()

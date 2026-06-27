@@ -6,7 +6,9 @@ enters on breakout above resistance, exits on breakdown below support.
 
 from __future__ import annotations
 
-import backtrader as bt
+from typing import Any
+
+import numpy as np
 
 from quantinvest.strategy.base_strategy import BaseStrategy
 
@@ -14,9 +16,7 @@ from quantinvest.strategy.base_strategy import BaseStrategy
 class BreakoutStrategy(BaseStrategy):
     """Support/Resistance breakout strategy.
 
-    Calculates dynamic support and resistance levels from recent price range.
-    Enters long when price breaks above resistance with volume confirmation.
-    Exits when price breaks below support.
+    Uses pre-computed talib Highest/Lowest/SMA(volume) arrays.
 
     Params:
         lookback (int): Lookback period for support/resistance (default 20)
@@ -26,54 +26,50 @@ class BreakoutStrategy(BaseStrategy):
     """
 
     params = dict(
-        lookback=20,
-        breakout_threshold=0.01,
-        use_volume_filter=True,
-        volume_factor=1.2,
+        lookback=20, breakout_threshold=0.01,
+        use_volume_filter=True, volume_factor=1.2, _talib={},
     )
 
-    def __init__(self) -> None:
-        super().__init__()
-        # Dynamic support/resistance from recent price range
-        self.resistance = bt.indicators.Highest(
-            self.data.high, period=self.p.lookback
-        )
-        self.support = bt.indicators.Lowest(
-            self.data.low, period=self.p.lookback
-        )
+    @classmethod
+    def needs_talib(cls, kwargs: dict) -> dict[str, Any]:
+        vol_sma = [kwargs.get("lookback", 20)] if kwargs.get("use_volume_filter", True) else []
+        return {
+            "highest_periods": [kwargs.get("lookback", 20)],
+            "lowest_periods": [kwargs.get("lookback", 20)],
+            "vol_sma_periods": vol_sma,
+        }
 
-        if self.p.use_volume_filter:
-            self.vol_avg = bt.indicators.SimpleMovingAverage(
-                self.data.volume, period=self.p.lookback
-            )
-
-    def _breakout_above_resistance(self) -> bool:
-        """Check if price breaks above recent resistance with sufficient margin."""
-        resist = self.resistance[-1]  # Resistance before current bar
-        close = self.data.close[0]
+    def _breakout_above_resistance(self, idx: int) -> bool:
+        t = self.p._talib
+        resist = t[f"highest_{self.p.lookback}"][idx]
+        if not np.isfinite(resist):
+            return False
+        close = t["_close"][idx]
         breakout_pct = (close - resist) / resist
         if breakout_pct < self.p.breakout_threshold:
             return False
 
-        # Volume confirmation
         if self.p.use_volume_filter:
-            vol_avg = self.vol_avg[0]
-            if vol_avg > 0 and self.data.volume[0] < self.p.volume_factor * vol_avg:
-                return False
+            vol_avg = t[f"vol_sma_{self.p.lookback}"][idx]
+            if np.isfinite(vol_avg) and vol_avg > 0:
+                if t["_volume"][idx] < self.p.volume_factor * vol_avg:
+                    return False
 
         return True
 
-    def _breakdown_below_support(self) -> bool:
-        """Check if price breaks below recent support."""
-        sup = self.support[-1]  # Support before current bar
-        close = self.data.close[0]
-        breakdown_pct = (close - sup) / sup
-        return breakdown_pct < -self.p.breakout_threshold
+    def _breakdown_below_support(self, idx: int) -> bool:
+        t = self.p._talib
+        sup = t[f"lowest_{self.p.lookback}"][idx]
+        if not np.isfinite(sup):
+            return False
+        close = t["_close"][idx]
+        return (close - sup) / sup < -self.p.breakout_threshold
 
     def next(self) -> None:
         super().next()
+        idx = len(self.data.close) - 1
         if not self.position:
-            if self._breakout_above_resistance():
+            if self._breakout_above_resistance(idx):
                 self.buy()
-        elif self._breakdown_below_support():
+        elif self._breakdown_below_support(idx):
             self.close()
