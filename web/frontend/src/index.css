@@ -976,17 +976,25 @@ body {
 .opt-row select {
   flex: 1;
   max-width: 300px;
-  background: var(--bg-glass);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-glass);
   color: var(--text-primary);
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 13px;
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .opt-row select:focus {
   border-color: var(--accent);
+}
+
+.opt-row select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 8px;
 }
 
 .param-ranges {
