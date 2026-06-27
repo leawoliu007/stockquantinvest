@@ -77,6 +77,8 @@ export default function App() {
   const changeStrategy = async (symbol, newStrategy) => {
     try {
       await axios.patch(`${API}/watchlist/${symbol}`, { strategy: newStrategy })
+      // Clear old cache so new strategy triggers re-backtest
+      await axios.delete(`${API}/backtest-cached/${symbol}`)
       setWatchlist(prev => prev.map(w =>
         w.symbol === symbol ? { ...w, strategy: newStrategy } : w
       ))
