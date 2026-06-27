@@ -54,6 +54,15 @@ class BacktestEngine:
             **kwargs,
         )
         results = self.cerebro.run()
+
+        # Force close any remaining position at last bar's close price
+        pos = self.cerebro.broker.getposition(self.cerebro.datas[0])
+        if pos.size > 0:
+            last_close = self.dataframe["close"].iloc[-1]
+            self.cerebro.broker.cash += pos.size * last_close
+            pos.size = 0
+            pos.price = 0.0
+
         return results[0]
 
     def get_equity_curve(self) -> pd.Series:
