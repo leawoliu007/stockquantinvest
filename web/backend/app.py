@@ -132,6 +132,20 @@ class AnalyzeRequest(BaseModel):
     cash: float = 100_000.0
 
 
+# --- Helper: sanitize float values for JSON ---
+def _sanitize_float(o):
+    """Recursively replace inf/nan with None so JSON serialization never fails."""
+    import math as _m
+    if isinstance(o, dict):
+        return {k: _sanitize_float(v) for k, v in o.items()}
+    elif isinstance(o, list):
+        return [_sanitize_float(item) for item in o]
+    elif isinstance(o, float):
+        if _m.isinf(o) or _m.isnan(o):
+            return None
+    return o
+
+
 # --- Helper: get DB connection ---
 # Each call creates a fresh connection to avoid SQLite cross-thread errors
 # (uvicorn runs handlers in a thread pool; a shared conn breaks under concurrency)
@@ -390,104 +404,64 @@ def _get_fallback_quote(symbol: str) -> dict:
     return {"price": None, "change_pct": None, "prev_close": None}
 
 
+def _get_cached_price(symbol: str) -> dict:
+    """Get latest price from the most recent cached backtest result (fast, no network)."""
+    try:
+        db = _get_db()
+        try:
+            history = db.get_backtest_history(symbol=symbol, limit=1)
+            if history and history[0].get("id"):
+                detail = db.get_backtest_result(history[0]["id"])
+                if detail and detail.get("kline"):
+                    kline = detail["kline"]
+                    if len(kline) >= 2:
+                        price = kline[-1].get("close")
+                        prev_close = kline[-2].get("close")
+                        if price and prev_close and prev_close > 0:
+                            change_pct = round((price - prev_close) / prev_close * 100, 2)
+                            return {"price": price, "change_pct": change_pct, "prev_close": prev_close}
+                    elif len(kline) == 1:
+                        return {"price": kline[0].get("close"), "change_pct": None, "prev_close": None}
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return {"price": None, "change_pct": None, "prev_close": None}
+
+
 @app.get("/api/quote")
 def get_quotes(symbols: str = Query(..., description="Comma-separated symbols (e.g. 600519.SH,0700.HK)")):
-    """Fetch real-time price and daily change % for given symbols."""
+    """Fetch price for given symbols. Uses cached backtest data for speed."""
     symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     results = []
 
-    # Batch fetch A-share spot data via akshare
+    # A-share: use cached backtest data (fast, no network)
     a_symbols = [s for s in symbol_list if s.endswith((".SH", ".SZ"))]
     other_symbols = [s for s in symbol_list if not s.endswith((".SH", ".SZ"))]
 
-    # A-share: use akshare real-time snapshot
-    if a_symbols:
-        try:
-            import akshare as ak
-            # Fetch stocks
-            stock_codes = []
-            etf_codes = []
-            for s in a_symbols:
-                code = s.replace(".SH", "").replace(".SZ", "")
-                # ETF codes start with 51/15/16/56 etc.
-                if code[:2] in ("51", "15", "16", "56", "10", "50", "12"):
-                    etf_codes.append(code)
-                else:
-                    stock_codes.append(code)
+    for s in a_symbols:
+        fallback = _get_cached_price(s)
+        results.append({"symbol": s, **fallback})
 
-            spot_results = {}
-            if stock_codes:
-                try:
-                    df = ak.stock_zh_a_spot_em()
-                    for code in stock_codes:
-                        row = df[df["代码"] == code]
-                        if not row.empty:
-                            r = row.iloc[0]
-                            sym = code + ".SH" if code.startswith(("6", "9")) else code + ".SZ"
-                            spot_results[sym] = {
-                                "price": round(float(r.get("最新价", 0)), 3),
-                                "change_pct": round(float(r.get("涨跌幅", 0)), 2),
-                                "prev_close": round(float(r.get("昨收", 0)), 3),
-                            }
-                except Exception:
-                    pass
-
-            if etf_codes:
-                try:
-                    df = ak.fund_etf_spot_em()
-                    for code in etf_codes:
-                        row = df[df["代码"] == code]
-                        if not row.empty:
-                            r = row.iloc[0]
-                            sym = code + ".SH" if code.startswith(("5", "1")) else code + ".SZ"
-                            spot_results[sym] = {
-                                "price": round(float(r.get("最新价", 0)), 3),
-                                "change_pct": round(float(r.get("涨跌幅", 0)), 2),
-                                "prev_close": round(float(r.get("昨收", 0)), 3),
-                            }
-                except Exception:
-                    pass
-
-            for s in a_symbols:
-                if s in spot_results:
-                    results.append({"symbol": s, **spot_results[s]})
-                else:
-                    # Fallback: fetch last 2 trading days via baostock / akshare historical
-                    fallback = _get_fallback_quote(s)
-                    results.append({"symbol": s, **fallback})
-        except Exception:
-            for s in a_symbols:
-                results.append({"symbol": s, "price": None, "change_pct": None, "prev_close": None})
-
-    # HK / US: use yfinance (with proxy if available)
-    import os
-    proxy = os.environ.get("http_proxy", "http://192.168.0.114:7890")
-    os.environ["HTTP_PROXY"] = proxy
-    os.environ["HTTPS_PROXY"] = proxy
-
+    # Non-A-share: use yfinance with timeout
     for symbol in other_symbols:
         try:
             import yfinance as yf
-            ticker_sym = symbol.replace(".US", "")
-            ticker = yf.Ticker(ticker_sym)
-            info = ticker.fast_info
-            price = round(info.last_price, 3) if hasattr(info, "last_price") else None
-
-            # Get previous close for change %
-            prev_close = None
-            change_pct = None
-            if price:
-                try:
-                    hist = ticker.history(period="5d")
-                    if not hist.empty and len(hist) >= 2:
-                        prev_close = round(float(hist["Close"].iloc[-2]), 3)
-                        change_pct = round((price - prev_close) / prev_close * 100, 2)
-                    elif not hist.empty:
-                        prev_close = round(float(hist["Close"].iloc[-1]), 3)
-                except Exception:
-                    pass
-
-            results.append({"symbol": symbol, "price": price, "change_pct": change_pct, "prev_close": prev_close})
+            ticker_code = symbol.replace(".HK", "").replace(".US", "")
+            if symbol.endswith(".HK"):
+                ticker_code += ".HKG"
+            ticker = yf.Ticker(ticker_code)
+            hist = ticker.history(period="5d")
+            if not hist.empty and len(hist) >= 2:
+                price = round(float(hist["Close"].iloc[-1]), 3)
+                prev_close = round(float(hist["Close"].iloc[-2]), 3)
+                change_pct = round((price - prev_close) / prev_close * 100, 2)
+                results.append({"symbol": symbol, "price": price, "change_pct": change_pct, "prev_close": prev_close})
+            elif not hist.empty:
+                price = round(float(hist["Close"].iloc[-1]), 3)
+                results.append({"symbol": symbol, "price": price, "change_pct": None, "prev_close": None})
+            else:
+                results.append({"symbol": symbol, "price": None, "change_pct": None, "prev_close": None})
         except Exception:
             results.append({"symbol": symbol, "price": None, "change_pct": None, "prev_close": None})
 
@@ -737,7 +711,7 @@ def run_analyze(
     except Exception:
         pass  # Don't fail the response if saving fails
 
-    return {
+    result = {
         "symbol": symbol,
         "freq": freq,
         "strategy": db_strategy,
@@ -752,6 +726,7 @@ def run_analyze(
         "final_value": final_value,
         "total_return_pct": round(total_return, 2),
     }
+    return _sanitize_float(result)
 
 
 # --- Backtest Cache API ---
@@ -783,7 +758,7 @@ def get_cached_backtest(
         detail = db.get_backtest_result(row["id"])
     finally:
         db.close()
-    return detail
+    return _sanitize_float(detail)
 
 
 @app.delete("/api/backtest-cached/{symbol}")
@@ -992,7 +967,7 @@ def batch_backtest(body: dict):
 
         results.append({"symbol": symbol, "strategies": strat_results})
 
-    return {"results": results}
+    return _sanitize_float({"results": results})
 
 
 # --- Strategy Signals API ---

@@ -66,7 +66,7 @@ export function Sidebar({
       </div>
 
       <div className="watchlist" role="listbox" aria-label="自选股列表">
-        {watchlist.map(item => (
+        {(watchlist || []).map(item => (
           <WatchlistItem
             key={item.symbol}
             item={item}
@@ -81,24 +81,57 @@ export function Sidebar({
         ))}
       </div>
 
-      <form className="add-form" onSubmit={e => { e.preventDefault(); addSymbol() }}>
-        <div className="add-input-wrapper">
-          <input
-            value={newSymbol}
-            onChange={e => { setNewSymbol(e.target.value); resolveCode(e.target.value) }}
-            placeholder="输入代码 如 600519"
-            aria-label="股票代码"
-          />
-          {resolving && <span className="resolve-spinner" />}
-          {resolvedSymbol && !resolving && (
-            <span className="resolved-preview" onClick={() => addSymbol()} title="点击添加">
-              {resolvedSymbol}{resolvedName ? ` — ${resolvedName}` : ''}
-            </span>
-          )}
-          {resolveError && <span className="resolve-error">{resolveError}</span>}
+      {/* Bottom controls — fixed at bottom via flex-shrink:0 */}
+      <div className="sidebar-bottom">
+        <form className="add-form" onSubmit={e => { e.preventDefault(); addSymbol() }}>
+          <div className="add-input-wrapper">
+            <input
+              value={newSymbol}
+              onChange={e => { setNewSymbol(e.target.value); resolveCode(e.target.value) }}
+              placeholder="输入代码 如 600519"
+              aria-label="股票代码"
+            />
+            {resolving && <span className="resolve-spinner" />}
+            {resolvedSymbol && !resolving && (
+              <span className="resolved-preview" onClick={() => addSymbol()} title="点击添加">
+                {resolvedSymbol}{resolvedName ? ` — ${resolvedName}` : ''}
+              </span>
+            )}
+            {resolveError && <span className="resolve-error">{resolveError}</span>}
+          </div>
+          <button type="submit" disabled={!newSymbol.trim()} aria-label="添加股票">+</button>
+        </form>
+
+        {/* Frequency selector */}
+        <div className="freq-selector">
+          <div className="sidebar-section" style={{ padding: 0 }}>
+            <h3>级别</h3>
+            <FreqSelector value={freq} onChange={setFreq} />
+          </div>
         </div>
-        <button type="submit" disabled={!newSymbol.trim()} aria-label="添加股票">+</button>
-      </form>
+
+        {/* Database update */}
+        <div className="sidebar-section">
+          <h3>数据库</h3>
+          <button
+            className={`db-update-btn ${updatingDb ? 'loading' : ''}`}
+            onClick={handleUpdateDb}
+            disabled={updatingDb}
+          >
+            {updatingDb ? '更新中...' : '刷新股票库'}
+          </button>
+          {updateResult && (
+            <div className="update-result">
+              {updateResult.sources && Object.entries(updateResult.sources).map(([k, v]) => (
+                <div key={k} className={`update-item ${v === 'ok' ? 'success' : 'error'}`}>
+                  {k}: {typeof v === 'string' && v !== 'ok' ? v.substring(0, 50) : v}
+                </div>
+              ))}
+              {updateResult.total && <div className="update-total">{updateResult.total}</div>}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Ambiguous market modal */}
       {ambiguousModal && (
@@ -162,36 +195,6 @@ export function Sidebar({
           </div>
         </div>
       )}
-
-      {/* Frequency selector */}
-      <div className="freq-selector">
-        <div className="sidebar-section" style={{ padding: 0 }}>
-          <h3>级别</h3>
-          <FreqSelector value={freq} onChange={setFreq} />
-        </div>
-      </div>
-
-      {/* Database update */}
-      <div className="sidebar-section">
-        <h3>数据库</h3>
-        <button
-          className={`db-update-btn ${updatingDb ? 'loading' : ''}`}
-          onClick={handleUpdateDb}
-          disabled={updatingDb}
-        >
-          {updatingDb ? '更新中...' : '刷新股票库'}
-        </button>
-        {updateResult && (
-          <div className="update-result">
-            {updateResult.sources && Object.entries(updateResult.sources).map(([k, v]) => (
-              <div key={k} className={`update-item ${v === 'ok' ? 'success' : 'error'}`}>
-                {k}: {typeof v === 'string' && v !== 'ok' ? v.substring(0, 50) : v}
-              </div>
-            ))}
-            {updateResult.total && <div className="update-total">{updateResult.total}</div>}
-          </div>
-        )}
-      </div>
     </aside>
   )
 }

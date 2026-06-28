@@ -69,13 +69,13 @@ export function OptimizerView({ watchlist, strategies, paramsSchema }) {
           <label>股票</label>
           <select value={optSymbol} onChange={e => setOptSymbol(e.target.value)}>
             <option value="">选择股票</option>
-            {watchlist.map(w => <option key={w.symbol} value={w.symbol}>{w.symbol}{w.name ? ` ${w.name}` : ''}</option>)}
+            {(watchlist || []).map(w => <option key={w.symbol} value={w.symbol}>{w.symbol}{w.name ? ` ${w.name}` : ''}</option>)}
           </select>
         </div>
         <div className="opt-row">
           <label>策略</label>
           <select value={optStrategy} onChange={e => setOptStrategy(e.target.value)}>
-            {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+            {(strategies || []).map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 

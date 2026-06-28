@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import { calculateStats, calculateBuyHoldBenchmark } from '../utils/stats'
 
@@ -18,6 +18,9 @@ export function useBacktest(selectedSymbol, freq, getSymbolStrategy) {
   const reqSeq = useRef(0)
   const debounceTimer = useRef(null)
   const lastLoadKey = useRef(null)
+  // Use refs to avoid re-creating functions on every render
+  const getStrategyRef = useRef(getSymbolStrategy)
+  getStrategyRef.current = getSymbolStrategy
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -51,13 +54,13 @@ export function useBacktest(selectedSymbol, freq, getSymbolStrategy) {
     }))
   }, [])
 
-  const runBacktest = useCallback(async () => {
-    if (!selectedSymbol) return
+  const runBacktestDirect = useCallback(async (symbol) => {
+    if (!symbol) return
     const seq = ++reqSeq.current
     setRunning(true)
     try {
       const res = await axios.get(`${API}/analyze`, {
-        params: { symbol: selectedSymbol, freq },
+        params: { symbol, freq },
       })
       if (seq !== reqSeq.current) return // stale
       populateFromFresh(res)
@@ -69,15 +72,14 @@ export function useBacktest(selectedSymbol, freq, getSymbolStrategy) {
     } finally {
       setRunning(false)
     }
-  }, [selectedSymbol, freq, populateFromFresh, clearResults])
+  }, [freq, populateFromFresh, clearResults])
 
-  const loadCachedBacktest = useCallback(async () => {
-    if (!selectedSymbol) return
-    if (loading || running) return
-    const strategy = getSymbolStrategy(selectedSymbol)
+  const loadCachedDirect = useCallback(async (symbol) => {
+    if (!symbol) return
+    const strategy = getStrategyRef.current(symbol)
     setLoading(true)
     try {
-      const res = await axios.get(`${API}/backtest-cached/${selectedSymbol}`, {
+      const res = await axios.get(`${API}/backtest-cached/${symbol}`, {
         params: { freq, strategy },
       })
       if (res.data) {
@@ -106,22 +108,26 @@ export function useBacktest(selectedSymbol, freq, getSymbolStrategy) {
       }
     } catch {}
     setLoading(false)
-    runBacktest()
-  }, [selectedSymbol, freq, loading, running, getSymbolStrategy, runBacktest])
+    runBacktestDirect(symbol)
+  }, [freq, runBacktestDirect])
 
-  // Auto-load when symbol/freq/strategy changes (debounced)
+  const runBacktest = useCallback(() => {
+    runBacktestDirect(selectedSymbol)
+  }, [selectedSymbol, runBacktestDirect])
+
+  // Auto-load when symbol/freq changes — stable dependency
   useEffect(() => {
     if (!selectedSymbol) return
-    const strategy = getSymbolStrategy(selectedSymbol)
+    const strategy = getStrategyRef.current(selectedSymbol)
     const key = `${selectedSymbol}:${freq}:${strategy}`
     if (lastLoadKey.current === key) return
     lastLoadKey.current = key
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
-    debounceTimer.current = setTimeout(loadCachedBacktest, 200)
+    debounceTimer.current = setTimeout(() => loadCachedDirect(selectedSymbol), 200)
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [selectedSymbol, freq, getSymbolStrategy, loadCachedBacktest])
+  }, [selectedSymbol, freq, loadCachedDirect])
 
   return {
     loading,

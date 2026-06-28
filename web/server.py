@@ -22,10 +22,18 @@ if not frontend_dist.exists():
 @app.get("/", include_in_schema=False)
 async def serve_spa_root():
     from starlette.responses import Response
-    return Response(index_html, media_type="text/html", headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
+    return Response(index_html.replace(
+        '<link rel="modulepreload"',
+        '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">\n<link rel="modulepreload"'
+    ), media_type="text/html", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
         "Pragma": "no-cache",
     })
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import Response
+    return Response(status_code=204)
 
 # Mount static assets (JS/CSS/images) — html=True provides SPA fallback for other paths
 from fastapi.staticfiles import StaticFiles
@@ -33,4 +41,4 @@ app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="stati
 
 import uvicorn
 
-uvicorn.run(app, host="0.0.0.0", port=8000)
+uvicorn.run(app, host="0.0.0.0", port=8765)

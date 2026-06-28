@@ -19,7 +19,7 @@ export default function App() {
   const {
     watchlist, selectedSymbol, setSelectedSymbol, quotes, strategies, paramsSchema,
     changeStrategy, addSymbol, removeSymbol, getSymbolStrategy, updateSymbolParams,
-  } = useWatchlist(setSelectedSymbol)
+  } = useWatchlist()
 
   const {
     resolvedSymbol, resolvedName, resolving, resolveError, ambiguousModal,

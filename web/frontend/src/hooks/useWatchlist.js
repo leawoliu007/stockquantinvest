@@ -3,7 +3,7 @@ import axios from 'axios'
 
 const API = '/api'
 
-export function useWatchlist(onSelectedChange) {
+export function useWatchlist() {
   const [watchlist, setWatchlist] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [quotes, setQuotes] = useState({})
@@ -25,20 +25,23 @@ export function useWatchlist(onSelectedChange) {
   const loadWatchlist = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/watchlist`)
-      setWatchlist(res.data)
-      if (res.data.length > 0 && !selectedSymbol) {
-        const first = res.data[0].symbol
-        setSelectedSymbol(first)
-        onSelectedChange?.(first)
+      const items = Array.isArray(res.data) ? res.data : []
+      setWatchlist(items)
+      if (items.length > 0 && !selectedSymbol) {
+        setSelectedSymbol(items[0].symbol)
       }
-      fetchQuotes(res.data)
+      fetchQuotes(items)
     } catch {}
-  }, [selectedSymbol, fetchQuotes, onSelectedChange])
+  }, [selectedSymbol, fetchQuotes])
 
   // Load strategies and params schema once
   useEffect(() => {
-    axios.get(`${API}/strategies`).then(r => setStrategies(r.data)).catch(() => {})
-    axios.get(`${API}/strategy-params-schema`).then(r => setParamsSchema(r.data)).catch(() => {})
+    axios.get(`${API}/strategies`)
+      .then(r => setStrategies(Array.isArray(r.data) ? r.data : []))
+      .catch(() => {})
+    axios.get(`${API}/strategy-params-schema`)
+      .then(r => setParamsSchema(typeof r.data === 'object' && r.data !== null ? r.data : {}))
+      .catch(() => {})
   }, [])
 
   // Initial load
@@ -70,13 +73,11 @@ export function useWatchlist(onSelectedChange) {
       const res = await axios.get(`${API}/watchlist`)
       setWatchlist(res.data)
       if (selectedSymbol === symbol) {
-        const next = res.data.length > 0 ? res.data[0].symbol : null
-        setSelectedSymbol(next)
-        onSelectedChange?.(next)
-        fetchQuotes(res.data)
+        setSelectedSymbol(res.data.length > 0 ? res.data[0].symbol : null)
       }
+      fetchQuotes(res.data)
     } catch {}
-  }, [selectedSymbol, onSelectedChange, fetchQuotes])
+  }, [selectedSymbol, fetchQuotes])
 
   const getSymbolStrategy = useCallback((sym) => {
     const item = watchlist.find(w => w.symbol === sym)
