@@ -13,6 +13,11 @@ export function BatchReportView({ watchlist, freq, setFreq }) {
 
   const wl = Array.isArray(watchlist) ? watchlist : []
 
+  // Debug: log watchlist changes
+  if (wl.length > 0 && !reportData && !reportRunning) {
+    console.log('[BatchReport] watchlist has', wl.length, 'items:', wl.map(w => w.symbol))
+  }
+
   const runBatch = async () => {
     if (wl.length === 0) return
     setReportRunning(true)
@@ -23,7 +28,9 @@ export function BatchReportView({ watchlist, freq, setFreq }) {
       const res = await axios.post(`${API}/batch-backtest`, { symbols, freq }, {
         timeout: 600000, // 10 min timeout for batch
       })
+      console.log('[Batch] Response:', res.data.results?.length, 'symbols')
       setReportData(res.data)
+      console.log('[Batch] setReportData called, next render should show table')
     } catch (e) {
       console.error('Batch backtest failed:', e)
       setReportError(e.message || '回测失败')
@@ -73,7 +80,7 @@ export function BatchReportView({ watchlist, freq, setFreq }) {
       )}
 
       {signalData && signalData.results && (
-        <SignalsTable data={signalData.results} />
+        <SignalsTable results={signalData.results} />
       )}
 
       {reportError && (
@@ -82,14 +89,43 @@ export function BatchReportView({ watchlist, freq, setFreq }) {
         </div>
       )}
 
-      {reportData && reportData.results && (
-        <ReportTable data={reportData.results} />
+      {reportData && reportData.results && Array.isArray(reportData.results) && reportData.results.length > 0 && (
+        <div className="report-table-wrapper">
+          <table className="report-table">
+            <thead>
+              <tr><th rowSpan={2}>股票代码</th><th colSpan={8}>策略对比</th></tr>
+              <tr>{(reportData.results[0]?.strategies || []).map(s => <th key={s.strategy} className="strat-header">{s.strategy}</th>)}</tr>
+            </thead>
+            <tbody>
+              {reportData.results.map(r => (
+                <tr key={r.symbol}>
+                  <td className="symbol-cell">{r.symbol}</td>
+                  {(r.strategies || []).map(s => (
+                    <td key={s.strategy} className={(s.total_return_pct ?? 0) >= 0 ? 'positive' : 'negative'}>
+                      {s.error ? <span className="error-text">错误</span> : (
+                        <div className="strat-cell">
+                          <div className="return-val">{(s.total_return_pct ?? 0) >= 0 ? '+' : ''}{s.total_return_pct ?? '-'}%</div>
+                          <div className="meta-row"><span>胜率{s.win_rate ?? '-'}%</span><span>DD{s.max_drawdown_pct ?? '-'}%</span></div>
+                          <div className="meta-row"><span>{s.trade_count ?? 0}笔</span></div>
+                        </div>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!reportData && !reportRunning && !reportError && (
         <div className="placeholder">
           {wl.length === 0 ? '自选股为空，请先添加股票' : `点击"开始批量回测"对所有自选股运行全部策略（${wl.length} 只股票 × 8 个策略）`}
         </div>
+      )}
+
+      {reportData && reportData.results && Array.isArray(reportData.results) && reportData.results.length === 0 && (
+        <div className="placeholder">回测完成，但没有结果（可能所有策略都失败了）</div>
       )}
     </div>
   )
@@ -155,12 +191,12 @@ function ReportTable({ results }) {
             <tr key={r.symbol}>
               <td className="symbol-cell">{r.symbol}</td>
               {(r.strategies || []).map(s => (
-                <td key={s.strategy} className={s.total_return_pct >= 0 ? 'positive' : 'negative'}>
+                <td key={s.strategy} className={(s.total_return_pct ?? 0) >= 0 ? 'positive' : 'negative'}>
                   {s.error ? <span className="error-text">错误</span> : (
                     <div className="strat-cell">
-                      <div className="return-val">{s.total_return_pct >= 0 ? '+' : ''}{s.total_return_pct}%</div>
-                      <div className="meta-row"><span>胜率{s.win_rate}%</span><span>DD{s.max_drawdown_pct}%</span></div>
-                      <div className="meta-row"><span>{s.trade_count}笔</span></div>
+                      <div className="return-val">{(s.total_return_pct ?? 0) >= 0 ? '+' : ''}{s.total_return_pct ?? '-'}%</div>
+                      <div className="meta-row"><span>胜率{s.win_rate ?? '-'}%</span><span>DD{s.max_drawdown_pct ?? '-'}%</span></div>
+                      <div className="meta-row"><span>{s.trade_count ?? 0}笔</span></div>
                     </div>
                   )}
                 </td>
