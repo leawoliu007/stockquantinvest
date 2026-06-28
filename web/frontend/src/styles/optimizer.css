@@ -1,0 +1,185 @@
+/* ===== Optimizer View ===== */
+.optimizer-view {
+  padding: 20px 24px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.optimizer-view h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.opt-config {
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.opt-row label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 60px;
+}
+
+.opt-row select {
+  flex: 1;
+  max-width: 300px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.opt-row select:focus {
+  border-color: var(--accent);
+}
+
+.opt-row select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 8px;
+}
+
+.param-ranges {
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--bg-glass);
+  border-radius: 6px;
+}
+
+.param-ranges h3 {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.range-label {
+  min-width: 120px;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-inputs input {
+  width: 70px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+}
+
+.range-inputs input:focus {
+  border-color: var(--accent);
+}
+
+.range-sep {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.opt-run-btn {
+  margin-top: 16px;
+  width: 100%;
+  max-width: 300px;
+}
+
+/* ===== Optimization Results ===== */
+.opt-results {
+  margin-top: 20px;
+}
+
+.opt-summary {
+  text-align: center;
+  padding: 12px;
+  background: var(--bg-glass);
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.opt-summary strong {
+  color: var(--accent);
+}
+
+.opt-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.opt-metric-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-glass);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.opt-metric-card h3 {
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.opt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.opt-table th {
+  padding: 6px 4px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.opt-table td {
+  padding: 6px 4px;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.opt-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
